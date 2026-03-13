@@ -1,5 +1,8 @@
-import { pipeline, RawImage } from "@huggingface/transformers";
+import { pipeline, RawImage, env } from "@huggingface/transformers";
 import sharp from "sharp";
+
+// Force cache to writable dir (not node_modules)
+env.cacheDir = process.env["TRANSFORMERS_CACHE"] || process.env["HF_HOME"] || "/tmp/.cache";
 
 export interface DepthResult {
   data: Float32Array;

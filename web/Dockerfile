@@ -27,6 +27,7 @@ ENV NODE_ENV=production
 
 # Writable cache dir for Transformers.js model downloads
 ENV TRANSFORMERS_CACHE=/app/.cache
+ENV HF_HOME=/app/.cache
 ENV XDG_CACHE_HOME=/app/.cache
 
 RUN addgroup --system --gid 1001 nodejs
