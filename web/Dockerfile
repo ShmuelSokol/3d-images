@@ -51,7 +51,7 @@ USER nextjs
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
-# More memory for depth model (~100MB) + image processing
-ENV NODE_OPTIONS="--max-old-space-size=512"
+# More memory for large depth model (~335MB) + image processing
+ENV NODE_OPTIONS="--max-old-space-size=1024"
 
 CMD ["node", "server.js"]
