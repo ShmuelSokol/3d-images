@@ -1,4 +1,5 @@
-import { pipeline, type PipelineType } from "@xenova/transformers";
+import { pipeline, RawImage, type PipelineType } from "@xenova/transformers";
+import sharp from "sharp";
 
 export interface DepthResult {
   data: Float32Array;
@@ -38,7 +39,8 @@ async function ensureModel(model: string) {
 
 /**
  * Estimate depth from a JPEG/PNG buffer.
- * Converts to data URL since Node.js fetch doesn't support file:// URLs.
+ * Decodes to raw RGB pixels via sharp, then constructs a RawImage directly
+ * to avoid data URL issues in Node.js/Docker environments.
  */
 export async function estimateDepth(
   imageBuffer: Buffer,
@@ -46,12 +48,16 @@ export async function estimateDepth(
 ): Promise<DepthResult> {
   await ensureModel(model);
 
-  // Convert buffer to data URL (Node.js fetch can't handle file:// URLs)
-  const base64 = imageBuffer.toString("base64");
-  const dataUrl = `data:image/jpeg;base64,${base64}`;
+  // Decode image to raw RGB pixels using sharp
+  const { data: pixels, info } = await sharp(imageBuffer)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const img = new RawImage(new Uint8ClampedArray(pixels), info.width, info.height, 3);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await estimator(dataUrl);
+  const raw: any = await estimator(img);
   const r = Array.isArray(raw) ? raw[0] : raw;
 
   const src = r.predicted_depth.data;
