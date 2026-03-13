@@ -1,25 +1,30 @@
 # 3D Image Generator
 
 ## Overview
-Upload a photo → AI estimates depth per pixel → generates an anaglyph 3D image (red/cyan glasses).
+Upload photos or videos → AI estimates depth per pixel → generates anaglyph 3D images/videos (red/cyan glasses).
 
 ## Stack
 - **Framework**: Next.js 14, TypeScript, TailwindCSS
 - **Database**: Prisma 5 + Supabase PostgreSQL
 - **Storage**: Supabase Storage (bucket: `3d-images`)
 - **Deployment**: Railway (standalone Docker)
-- **Depth AI**: Transformers.js (`Xenova/depth-anything-small-hf`) — runs client-side in browser
+- **Depth AI**: Transformers.js via CDN in Web Worker
+  - HD mode: `Xenova/depth-anything-base-hf` (~99MB, better face/detail accuracy)
+  - Fast mode: `Xenova/depth-anything-small-hf` (~25MB, faster processing)
 
 ## Architecture
-1. User uploads image → saved to Supabase storage
-2. Client loads Depth-Anything model via Transformers.js (~25MB, cached after first load)
-3. Depth estimation runs in browser → produces depth map
-4. Anaglyph algorithm shifts red/cyan channels based on depth → 3D effect
-5. User adjusts intensity slider, downloads result, optionally saves to gallery
+1. Web Worker preloads depth model on page load (CDN, cached in IndexedDB)
+2. User uploads images/videos → thumbnails appear instantly (blob URLs)
+3. Images: depth estimation in worker → anaglyph on main thread canvas → auto-save to Supabase
+4. Videos: frame extraction → per-frame depth + anaglyph → MediaRecorder → WebM output
+5. Intensity slider redraws anaglyph via direct canvas putImageData (instant, no encoding)
+6. Download All bundles results as ZIP via JSZip
 
 ## Key Files
-- `src/app/components/ImageProcessor.tsx` — main client component (upload, depth, anaglyph)
+- `public/depth-worker.js` — Web Worker for depth estimation (loads Transformers.js from CDN)
+- `src/app/components/ImageProcessor.tsx` — main client component (images, videos, ZIP)
 - `src/lib/anaglyph.ts` — canvas-based anaglyph generation algorithm
+- `src/lib/video-processor.ts` — video frame extraction, processing, MediaRecorder encoding
 - `src/app/api/images/route.ts` — upload/list images API
 - `src/app/api/images/[id]/save-results/route.ts` — save depth map + anaglyph
 - `prisma/schema.prisma` — Image model (td_image table)
@@ -34,10 +39,17 @@ npx prisma@5 generate # Generate Prisma client
 npx prisma@5 studio   # Browse data
 ```
 
+## Deploy
+```bash
+railway up web --path-as-root --detach
+```
+
 ## Important Notes
-- Use `process.env["KEY"]` (bracket notation) not `process.env.KEY` — standalone webpack inlines dot notation at build
+- Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5
 - Alpine Docker needs `apk add openssl` for Prisma
-- NEXT_PUBLIC_ vars must be available at build time (passed as build args in Dockerfile)
+- NEXT_PUBLIC_ vars must be available at build time
 - Health check at `/api/health`
 - DB table prefix: `td_` (3d = td)
+- `@xenova/transformers` is NOT an npm dependency — loaded via CDN in the worker
+- Video: max 60s, 15fps, 720p, output is WebM
