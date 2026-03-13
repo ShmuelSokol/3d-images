@@ -8,6 +8,7 @@ interface Job {
   id: string;
   originalUrl: string;
   depthMapUrl: string | null;
+  distanceMapUrl: string | null;
   anaglyphUrl: string | null;
   videoUrl: string | null;
   fileName: string;
