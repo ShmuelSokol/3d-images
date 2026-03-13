@@ -14,6 +14,7 @@ interface ImageJob {
   clientId: string;
   serverId?: string;
   fileName: string;
+  kind: "image";
   stage: "queued" | "processing" | "done" | "error";
   originalUrl: string;
   depthUrl?: string;
@@ -27,14 +28,19 @@ interface ImageJob {
 
 interface VideoJob {
   clientId: string;
+  serverId?: string;
   fileName: string;
-  stage: "idle" | "processing" | "done" | "error";
+  kind: "video";
+  stage: "queued" | "processing" | "done" | "error";
+  file: File;
+  thumbnailUrl?: string;
   originalUrl: string;
   resultUrl?: string;
   progress?: VideoProgress;
   error?: string;
 }
 
+type Job = ImageJob | VideoJob;
 type Quality = "fast" | "hd";
 
 const MODELS: Record<Quality, string> = {
@@ -70,36 +76,69 @@ function renderDepthBlob(d: DepthData): Promise<string> {
   );
 }
 
+async function captureVideoThumbnail(url: string): Promise<string> {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+  await new Promise<void>((r, rej) => {
+    video.onloadeddata = () => r();
+    video.onerror = () => rej(new Error("video load failed"));
+  });
+  video.currentTime = 0.5;
+  await new Promise<void>((r) => {
+    video.onseeked = () => r();
+  });
+  const c = document.createElement("canvas");
+  const scale = 200 / Math.max(video.videoWidth, video.videoHeight);
+  c.width = Math.round(video.videoWidth * scale);
+  c.height = Math.round(video.videoHeight * scale);
+  c.getContext("2d")!.drawImage(video, 0, 0, c.width, c.height);
+  return new Promise((r) =>
+    c.toBlob((b) => r(URL.createObjectURL(b!)), "image/jpeg", 0.7)
+  );
+}
+
 // ── Component ──
 
 export default function ImageProcessor() {
-  const [jobs, setJobs] = useState<ImageJob[]>([]);
+  const [imageJobs, setImageJobs] = useState<ImageJob[]>([]);
   const [videoJobs, setVideoJobs] = useState<VideoJob[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedType, setSelectedType] = useState<"image" | "video">("image");
   const [quality, setQuality] = useState<Quality>("hd");
   const [globalIntensity, setGlobalIntensity] = useState(10);
-  const [modelStatus, setModelStatus] = useState<"idle" | "loading" | "ready">(
-    "idle"
-  );
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "loading" | "ready"
+  >("idle");
   const [modelProgress, setModelProgress] = useState(0);
   const [zipping, setZipping] = useState(false);
 
   const workerRef = useRef<Worker | null>(null);
   const callbacksRef = useRef<
-    Map<string, { resolve: (d: DepthData) => void; reject: (e: Error) => void }>
+    Map<
+      string,
+      { resolve: (d: DepthData) => void; reject: (e: Error) => void }
+    >
   >(new Map());
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
   const rafRef = useRef(0);
   const pendingRef = useRef<Map<string, ImageData>>(new Map());
-  const jobsRef = useRef(jobs);
-  const videoAbortRef = useRef<AbortController | null>(null);
+  const imageJobsRef = useRef(imageJobs);
+  const videoJobsRef = useRef(videoJobs);
+  const qualityRef = useRef(quality);
+  const videoAbortRef = useRef<Map<string, AbortController>>(new Map());
 
   useEffect(() => {
-    jobsRef.current = jobs;
-  }, [jobs]);
+    imageJobsRef.current = imageJobs;
+  }, [imageJobs]);
+  useEffect(() => {
+    videoJobsRef.current = videoJobs;
+  }, [videoJobs]);
+  useEffect(() => {
+    qualityRef.current = quality;
+  }, [quality]);
 
   // ── Promise-based worker API ──
   const estimate = useCallback(
@@ -143,8 +182,7 @@ export default function ImageProcessor() {
           callbacksRef.current.delete(m.id);
           cb.reject(new Error(m.error));
         }
-        // Also handle image job errors
-        setJobs((p) =>
+        setImageJobs((p) =>
           p.map((j) =>
             j.clientId === m.id
               ? { ...j, stage: "error", error: m.error }
@@ -159,18 +197,29 @@ export default function ImageProcessor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Notify worker when quality changes ──
   useEffect(() => {
-    workerRef.current?.postMessage({ type: "set-model", model: MODELS[quality] });
+    workerRef.current?.postMessage({
+      type: "set-model",
+      model: MODELS[quality],
+    });
   }, [quality]);
 
-  // ── Image queue ──
+  // ── Unified queue: images first, then videos ──
   useEffect(() => {
     if (processingRef.current) return;
-    const next = jobs.find((j) => j.stage === "queued");
-    if (next) runImageJob(next.clientId);
+
+    const nextImg = imageJobs.find((j) => j.stage === "queued");
+    if (nextImg) {
+      runImageJob(nextImg.clientId);
+      return;
+    }
+
+    const nextVid = videoJobs.find((v) => v.stage === "queued");
+    if (nextVid) {
+      runVideoJob(nextVid.clientId);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs]);
+  }, [imageJobs, videoJobs]);
 
   // ── Draw anaglyph on canvas ──
   const drawAnaglyph = useCallback(
@@ -191,23 +240,28 @@ export default function ImageProcessor() {
     []
   );
 
+  const selected = selectedId
+    ? (imageJobs.find((j) => j.clientId === selectedId) as Job | undefined) ??
+      videoJobs.find((v) => v.clientId === selectedId)
+    : null;
+
   useEffect(() => {
-    if (!selectedId || selectedType !== "image") return;
-    const j = jobs.find((x) => x.clientId === selectedId);
-    if (j?.stage === "done") drawAnaglyph(j);
-  }, [selectedId, selectedType, jobs, drawAnaglyph]);
+    if (selected?.kind === "image" && selected.stage === "done") {
+      drawAnaglyph(selected);
+    }
+  }, [selectedId, selected, drawAnaglyph]);
 
   // ── Process image ──
   async function runImageJob(clientId: string) {
     processingRef.current = true;
-    setJobs((p) =>
+    setImageJobs((p) =>
       p.map((j) =>
         j.clientId === clientId ? { ...j, stage: "processing" } : j
       )
     );
 
     try {
-      const job = jobsRef.current.find((j) => j.clientId === clientId)!;
+      const job = imageJobsRef.current.find((j) => j.clientId === clientId)!;
       const fileBlob = await fetch(job.originalUrl).then((r) => r.blob());
       const bmp = await createImageBitmap(fileBlob);
 
@@ -233,7 +287,7 @@ export default function ImageProcessor() {
       );
       const buffer = await jpegBlob.arrayBuffer();
 
-      setJobs((p) =>
+      setImageJobs((p) =>
         p.map((j) =>
           j.clientId === clientId
             ? { ...j, originalImageData: imageData, width: w, height: h }
@@ -241,14 +295,12 @@ export default function ImageProcessor() {
         )
       );
 
-      // Upload (fire & forget)
       uploadOriginal(clientId, job.fileName, w, h, jpegBlob);
 
-      // Depth estimation via worker
-      const depth = await estimate(buffer, clientId, MODELS[quality]);
-
+      const depth = await estimate(buffer, clientId, MODELS[qualityRef.current]);
       const depthUrl = await renderDepthBlob(depth);
-      setJobs((p) =>
+
+      setImageJobs((p) =>
         p.map((j) =>
           j.clientId === clientId
             ? { ...j, stage: "done", depthData: depth, depthUrl }
@@ -257,14 +309,14 @@ export default function ImageProcessor() {
       );
       processingRef.current = false;
 
-      // Auto-save (background)
-      const serverId = jobsRef.current.find(
+      const serverId = imageJobsRef.current.find(
         (j) => j.clientId === clientId
       )?.serverId;
-      if (serverId) autoSave(serverId, imageData, depth, job.intensity, depthUrl);
+      if (serverId)
+        autoSaveImage(serverId, imageData, depth, job.intensity, depthUrl);
       pendingRef.current.delete(clientId);
     } catch (err) {
-      setJobs((p) =>
+      setImageJobs((p) =>
         p.map((j) =>
           j.clientId === clientId
             ? { ...j, stage: "error", error: (err as Error).message }
@@ -277,11 +329,9 @@ export default function ImageProcessor() {
 
   // ── Process video ──
   async function runVideoJob(clientId: string) {
-    const vj = videoJobs.find((v) => v.clientId === clientId);
-    if (!vj) return;
-
+    processingRef.current = true;
     const abort = new AbortController();
-    videoAbortRef.current = abort;
+    videoAbortRef.current.set(clientId, abort);
 
     setVideoJobs((p) =>
       p.map((v) =>
@@ -290,14 +340,13 @@ export default function ImageProcessor() {
     );
 
     try {
-      const fileBlob = await fetch(vj.originalUrl).then((r) => r.blob());
-      const file = new File([fileBlob], vj.fileName, { type: fileBlob.type });
+      const vj = videoJobsRef.current.find((v) => v.clientId === clientId)!;
 
       const resultBlob = await processVideo(
-        file,
+        vj.file,
         estimate,
         globalIntensity,
-        MODELS[quality],
+        MODELS[qualityRef.current],
         (progress) => {
           setVideoJobs((p) =>
             p.map((v) =>
@@ -309,13 +358,17 @@ export default function ImageProcessor() {
       );
 
       const resultUrl = URL.createObjectURL(resultBlob);
+
       setVideoJobs((p) =>
         p.map((v) =>
           v.clientId === clientId
-            ? { ...v, stage: "done", resultUrl }
+            ? { ...v, stage: "done", resultUrl, progress: undefined }
             : v
         )
       );
+
+      // Auto-save video result to server
+      autoSaveVideo(clientId, vj.fileName, resultBlob);
     } catch (err) {
       if ((err as Error).message !== "Aborted") {
         setVideoJobs((p) =>
@@ -327,7 +380,9 @@ export default function ImageProcessor() {
         );
       }
     }
-    videoAbortRef.current = null;
+
+    videoAbortRef.current.delete(clientId);
+    processingRef.current = false;
   }
 
   // ── Server helpers ──
@@ -346,7 +401,7 @@ export default function ImageProcessor() {
       const res = await fetch("/api/images", { method: "POST", body: fd });
       if (res.ok) {
         const data = await res.json();
-        setJobs((p) =>
+        setImageJobs((p) =>
           p.map((j) =>
             j.clientId === clientId ? { ...j, serverId: data.id } : j
           )
@@ -357,7 +412,7 @@ export default function ImageProcessor() {
     }
   }
 
-  async function autoSave(
+  async function autoSaveImage(
     serverId: string,
     imageData: ImageData,
     depth: DepthData,
@@ -393,25 +448,66 @@ export default function ImageProcessor() {
     }
   }
 
+  async function autoSaveVideo(
+    clientId: string,
+    fileName: string,
+    resultBlob: Blob
+  ) {
+    try {
+      // Upload original + result as a single form submission
+      const fd = new FormData();
+      fd.append("file", resultBlob, `3d-${fileName.replace(/\.[^.]+$/, "")}.webm`);
+      fd.append("width", "720");
+      fd.append("height", "480");
+      const res = await fetch("/api/images", { method: "POST", body: fd });
+      if (res.ok) {
+        const data = await res.json();
+        setVideoJobs((p) =>
+          p.map((v) =>
+            v.clientId === clientId ? { ...v, serverId: data.id } : v
+          )
+        );
+      }
+    } catch {
+      /* non-critical */
+    }
+  }
+
   // ── Handlers ──
-  function handleFiles(files: FileList | File[]) {
+  async function handleFiles(files: FileList | File[]) {
     for (const f of Array.from(files)) {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const url = URL.createObjectURL(f);
 
       if (f.type.startsWith("video/")) {
+        // Capture thumbnail from first frame
+        let thumbnailUrl: string | undefined;
+        try {
+          thumbnailUrl = await captureVideoThumbnail(url);
+        } catch {
+          /* use fallback */
+        }
+
         setVideoJobs((p) => [
-          ...p,
-          { clientId: id, fileName: f.name, stage: "idle", originalUrl: url },
-        ]);
-        setSelectedId(id);
-        setSelectedType("video");
-      } else if (f.type.startsWith("image/")) {
-        setJobs((p) => [
           ...p,
           {
             clientId: id,
             fileName: f.name,
+            kind: "video",
+            stage: "queued",
+            file: f,
+            originalUrl: url,
+            thumbnailUrl,
+          },
+        ]);
+        setSelectedId(id);
+      } else if (f.type.startsWith("image/")) {
+        setImageJobs((p) => [
+          ...p,
+          {
+            clientId: id,
+            fileName: f.name,
+            kind: "image",
             stage: "queued",
             originalUrl: url,
             intensity: globalIntensity,
@@ -419,21 +515,18 @@ export default function ImageProcessor() {
             height: 0,
           },
         ]);
-        if (!selectedId) {
-          setSelectedId(id);
-          setSelectedType("image");
-        }
+        if (!selectedId) setSelectedId(id);
       }
     }
   }
 
   function handleIntensityChange(clientId: string, val: number) {
-    setJobs((p) =>
+    setImageJobs((p) =>
       p.map((j) => (j.clientId === clientId ? { ...j, intensity: val } : j))
     );
     cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
-      const j = jobsRef.current.find((x) => x.clientId === clientId);
+      const j = imageJobsRef.current.find((x) => x.clientId === clientId);
       if (j?.stage === "done") drawAnaglyph(j, val);
     });
   }
@@ -453,18 +546,14 @@ export default function ImageProcessor() {
   }
 
   async function handleDownloadAll() {
-    const doneJobs = jobs.filter((j) => j.stage === "done");
+    const doneJobs = imageJobs.filter((j) => j.stage === "done");
     if (doneJobs.length === 0) return;
-
     setZipping(true);
     try {
       const JSZip = (await import("jszip")).default;
       const zip = new JSZip();
-
       for (const job of doneJobs) {
         if (!job.originalImageData || !job.depthData) continue;
-
-        // Generate anaglyph blob
         const ana = generateAnaglyph(
           job.originalImageData,
           job.depthData.data,
@@ -479,19 +568,29 @@ export default function ImageProcessor() {
         const anaBlob: Blob = await new Promise((r) =>
           c.toBlob((b) => r(b!), "image/png")
         );
-        const baseName = job.fileName.replace(/\.[^.]+$/, "");
-        zip.file(`${baseName}-3d.png`, anaBlob);
-
-        // Depth map
+        zip.file(
+          `${job.fileName.replace(/\.[^.]+$/, "")}-3d.png`,
+          anaBlob
+        );
         if (job.depthUrl) {
           const depthBlob = await fetch(job.depthUrl).then((r) => r.blob());
-          zip.file(`${baseName}-depth.png`, depthBlob);
+          zip.file(
+            `${job.fileName.replace(/\.[^.]+$/, "")}-depth.png`,
+            depthBlob
+          );
         }
       }
-
+      // Also include done videos
+      for (const vj of videoJobs.filter((v) => v.stage === "done" && v.resultUrl)) {
+        const videoBlob = await fetch(vj.resultUrl!).then((r) => r.blob());
+        zip.file(
+          `${vj.fileName.replace(/\.[^.]+$/, "")}-3d.webm`,
+          videoBlob
+        );
+      }
       const blob = await zip.generateAsync({ type: "blob" });
       const a = document.createElement("a");
-      a.download = "3d-images.zip";
+      a.download = "3d-results.zip";
       a.href = URL.createObjectURL(blob);
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
@@ -502,43 +601,51 @@ export default function ImageProcessor() {
     }
   }
 
-  function removeJob(id: string, type: "image" | "video") {
-    if (type === "image") {
-      const job = jobs.find((j) => j.clientId === id);
-      if (job) URL.revokeObjectURL(job.originalUrl);
-      if (job?.depthUrl) URL.revokeObjectURL(job.depthUrl);
-      setJobs((p) => p.filter((j) => j.clientId !== id));
-    } else {
-      const vj = videoJobs.find((v) => v.clientId === id);
-      if (vj) URL.revokeObjectURL(vj.originalUrl);
-      if (vj?.resultUrl) URL.revokeObjectURL(vj.resultUrl);
-      if (videoAbortRef.current) videoAbortRef.current.abort();
+  function removeJob(id: string) {
+    const imgJob = imageJobs.find((j) => j.clientId === id);
+    const vidJob = videoJobs.find((v) => v.clientId === id);
+
+    if (imgJob) {
+      URL.revokeObjectURL(imgJob.originalUrl);
+      if (imgJob.depthUrl) URL.revokeObjectURL(imgJob.depthUrl);
+      setImageJobs((p) => p.filter((j) => j.clientId !== id));
+    }
+    if (vidJob) {
+      URL.revokeObjectURL(vidJob.originalUrl);
+      if (vidJob.resultUrl) URL.revokeObjectURL(vidJob.resultUrl);
+      if (vidJob.thumbnailUrl) URL.revokeObjectURL(vidJob.thumbnailUrl);
+      const abort = videoAbortRef.current.get(id);
+      if (abort) abort.abort();
       setVideoJobs((p) => p.filter((v) => v.clientId !== id));
     }
+
     if (selectedId === id) {
-      const all = [
-        ...jobs.filter((j) => j.clientId !== id).map((j) => ({ id: j.clientId, type: "image" as const })),
-        ...videoJobs.filter((v) => v.clientId !== id).map((v) => ({ id: v.clientId, type: "video" as const })),
-      ];
-      if (all.length) {
-        setSelectedId(all[0].id);
-        setSelectedType(all[0].type);
-      } else {
-        setSelectedId(null);
-      }
+      const all = [...imageJobs, ...videoJobs].filter(
+        (j) => j.clientId !== id
+      );
+      setSelectedId(all[0]?.clientId ?? null);
     }
   }
 
   // ── Derived ──
-  const activeImage = selectedType === "image" ? jobs.find((j) => j.clientId === selectedId) : null;
-  const activeVideo = selectedType === "video" ? videoJobs.find((v) => v.clientId === selectedId) : null;
-  const doneCount = jobs.filter((j) => j.stage === "done").length;
-  const imgProcessing = jobs.find((j) => j.stage === "processing" || j.stage === "queued");
-  const queuedCount = jobs.filter((j) => j.stage === "queued").length;
-  const allItems = [
-    ...jobs.map((j) => ({ ...j, type: "image" as const })),
-    ...videoJobs.map((v) => ({ ...v, type: "video" as const })),
+  const allJobs: Job[] = [
+    ...imageJobs.map((j) => ({ ...j, kind: "image" as const })),
+    ...videoJobs.map((v) => ({ ...v, kind: "video" as const })),
   ];
+  const doneCount =
+    imageJobs.filter((j) => j.stage === "done").length +
+    videoJobs.filter((v) => v.stage === "done").length;
+  const currentlyProcessing =
+    imageJobs.find((j) => j.stage === "processing") ??
+    videoJobs.find((v) => v.stage === "processing");
+  const queuedCount =
+    imageJobs.filter((j) => j.stage === "queued").length +
+    videoJobs.filter((v) => v.stage === "queued").length;
+
+  const activeImg =
+    selected?.kind === "image" ? (selected as ImageJob) : null;
+  const activeVid =
+    selected?.kind === "video" ? (selected as VideoJob) : null;
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-8">
@@ -546,7 +653,7 @@ export default function ImageProcessor() {
       <header className="text-center mb-5">
         <h1 className="text-4xl font-bold mb-1">3D Image Generator</h1>
         <p className="text-gray-400 text-sm">
-          Upload photos or videos &rarr; AI depth estimation &rarr; anaglyph 3D
+          Upload photos or videos &rarr; AI depth &rarr; anaglyph 3D
         </p>
       </header>
 
@@ -568,33 +675,24 @@ export default function ImageProcessor() {
         </div>
       )}
 
-      {/* Controls bar */}
+      {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
-        {/* Quality toggle */}
         <div className="flex items-center bg-gray-900 rounded-lg p-0.5 text-xs">
           <button
             onClick={() => setQuality("fast")}
-            className={`px-3 py-1.5 rounded-md transition-colors ${
-              quality === "fast"
-                ? "bg-gray-700 text-white"
-                : "text-gray-400 hover:text-gray-300"
-            }`}
+            className={`px-3 py-1.5 rounded-md transition-colors ${quality === "fast" ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-300"}`}
           >
-            Fast (25MB)
+            Fast
           </button>
           <button
             onClick={() => setQuality("hd")}
-            className={`px-3 py-1.5 rounded-md transition-colors ${
-              quality === "hd"
-                ? "bg-cyan-700 text-white"
-                : "text-gray-400 hover:text-gray-300"
-            }`}
+            className={`px-3 py-1.5 rounded-md transition-colors ${quality === "hd" ? "bg-cyan-700 text-white" : "text-gray-400 hover:text-gray-300"}`}
           >
-            HD (99MB)
+            HD
           </button>
         </div>
 
-        {modelStatus === "ready" && allItems.length === 0 && (
+        {modelStatus === "ready" && allJobs.length === 0 && (
           <span className="text-xs text-green-600">Model ready</span>
         )}
 
@@ -604,15 +702,14 @@ export default function ImageProcessor() {
           <button
             onClick={handleDownloadAll}
             disabled={zipping}
-            className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-700
-                       rounded-lg text-xs font-medium transition-colors"
+            className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-700 rounded-lg text-xs font-medium transition-colors"
           >
-            {zipping ? "Zipping..." : `Download All as ZIP (${doneCount})`}
+            {zipping ? "Zipping..." : `Download All ZIP (${doneCount})`}
           </button>
         )}
       </div>
 
-      {/* Upload area */}
+      {/* Upload */}
       <div
         onDrop={(e) => {
           e.preventDefault();
@@ -622,9 +719,9 @@ export default function ImageProcessor() {
         onClick={() => fileInputRef.current?.click()}
         className={`border-2 border-dashed rounded-xl text-center cursor-pointer select-none
                    hover:border-cyan-500 hover:bg-gray-900/50 transition-all mb-5
-                   ${allItems.length === 0 ? "p-14 border-gray-600" : "p-4 border-gray-700"}`}
+                   ${allJobs.length === 0 ? "p-14 border-gray-600" : "p-4 border-gray-700"}`}
       >
-        {allItems.length === 0 ? (
+        {allJobs.length === 0 ? (
           <>
             <div className="text-5xl mb-3 opacity-80">📸</div>
             <p className="text-lg text-gray-300 mb-1">
@@ -635,7 +732,7 @@ export default function ImageProcessor() {
             </p>
           </>
         ) : (
-          <p className="text-sm text-gray-400">+ Add more images or videos</p>
+          <p className="text-sm text-gray-400">+ Add more files</p>
         )}
         <input
           ref={fileInputRef}
@@ -651,111 +748,143 @@ export default function ImageProcessor() {
       </div>
 
       {/* Processing banner */}
-      {imgProcessing && (
+      {(currentlyProcessing || queuedCount > 0) && (
         <div className="flex items-center gap-3 mb-4 bg-gray-900/80 rounded-lg px-4 py-2.5">
           <div className="w-4 h-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
           <span className="text-sm text-gray-300 truncate">
-            Processing {imgProcessing.fileName}...
+            {currentlyProcessing
+              ? `Processing ${currentlyProcessing.fileName}...`
+              : "Starting next job..."}
           </span>
           {queuedCount > 0 && (
-            <span className="ml-auto text-xs text-gray-500">
+            <span className="ml-auto text-xs text-gray-500 flex-shrink-0">
               +{queuedCount} queued
             </span>
           )}
         </div>
       )}
 
-      {/* Main content */}
-      {allItems.length > 0 && (
+      {/* Main */}
+      {allJobs.length > 0 && (
         <div className="flex flex-col lg:flex-row gap-5">
-          {/* Thumbnails */}
+          {/* Sidebar thumbnails */}
           <div className="lg:w-44 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[80vh] pb-2 lg:pb-0">
-            {allItems.map((item) => (
-              <button
-                key={item.clientId}
-                onClick={() => {
-                  setSelectedId(item.clientId);
-                  setSelectedType(item.type);
-                }}
-                className={`relative flex-shrink-0 w-16 h-16 lg:w-full lg:h-auto lg:aspect-square
-                           rounded-lg overflow-hidden border-2 transition-all duration-150
-                           ${
-                             selectedId === item.clientId
-                               ? "border-cyan-500 ring-1 ring-cyan-500/30"
-                               : "border-gray-700 hover:border-gray-500"
-                           }`}
-              >
-                {item.type === "video" ? (
-                  <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">
-                    🎬
+            {allJobs.map((job) => {
+              const isVideo = job.kind === "video";
+              const vj = isVideo ? (job as VideoJob) : null;
+              const pct =
+                vj?.progress && vj.stage === "processing"
+                  ? Math.round(
+                      (vj.progress.current / vj.progress.total) * 100
+                    )
+                  : null;
+
+              return (
+                <button
+                  key={job.clientId}
+                  onClick={() => setSelectedId(job.clientId)}
+                  className={`relative flex-shrink-0 w-16 h-16 lg:w-full lg:h-auto lg:aspect-square
+                             rounded-lg overflow-hidden border-2 transition-all duration-150
+                             ${selectedId === job.clientId ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
+                >
+                  {/* Thumbnail */}
+                  {isVideo && vj?.thumbnailUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={vj.thumbnailUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  ) : isVideo ? (
+                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">
+                      🎬
+                    </div>
+                  ) : (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={job.originalUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  )}
+
+                  {/* Video badge */}
+                  {isVideo && (
+                    <div className="absolute top-0.5 left-0.5 bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">
+                      VID
+                    </div>
+                  )}
+
+                  {/* Progress overlay for videos */}
+                  {pct !== null && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <span className="text-xs font-bold text-cyan-400 tabular-nums">
+                        {pct}%
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Status dot */}
+                  <div className="absolute bottom-0.5 right-0.5">
+                    {job.stage === "done" && (
+                      <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />
+                    )}
+                    {job.stage === "error" && (
+                      <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />
+                    )}
+                    {(job.stage === "processing" || job.stage === "queued") &&
+                      pct === null && (
+                        <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />
+                      )}
                   </div>
-                ) : (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={item.originalUrl}
-                    alt=""
-                    className="w-full h-full object-cover"
-                    loading="lazy"
-                  />
-                )}
-                <div className="absolute bottom-0.5 right-0.5">
-                  {item.stage === "done" && (
-                    <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />
-                  )}
-                  {item.stage === "error" && (
-                    <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />
-                  )}
-                  {(item.stage === "processing" || item.stage === "queued") && (
-                    <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />
-                  )}
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
 
           {/* Viewer */}
           <div className="flex-1 min-w-0">
-            {/* ── IMAGE VIEWER ── */}
-            {activeImage?.stage === "done" && (
+            {/* IMAGE: done */}
+            {activeImg?.stage === "done" && (
               <div className="space-y-4">
                 <div className="flex flex-wrap items-center gap-4 bg-gray-900 rounded-xl p-3">
                   <div className="flex items-center gap-3 flex-1 min-w-[180px]">
                     <label className="text-xs text-gray-400 whitespace-nowrap">
-                      3D Intensity
+                      Intensity
                     </label>
                     <input
                       type="range"
                       min="1"
                       max="40"
-                      value={activeImage.intensity}
+                      value={activeImg.intensity}
                       onChange={(e) =>
                         handleIntensityChange(
-                          activeImage.clientId,
+                          activeImg.clientId,
                           parseInt(e.target.value)
                         )
                       }
                       className="flex-1 accent-cyan-500 h-1.5"
                     />
                     <span className="text-xs text-cyan-400 w-6 text-right tabular-nums">
-                      {activeImage.intensity}
+                      {activeImg.intensity}
                     </span>
                   </div>
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleDownloadImage(activeImage)}
+                      onClick={() => handleDownloadImage(activeImg)}
                       className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
                     >
                       Download
                     </button>
                     <button
-                      onClick={() => removeJob(activeImage.clientId, "image")}
+                      onClick={() => removeJob(activeImg.clientId)}
                       className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
                     >
                       Remove
                     </button>
                   </div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <h3 className="text-xs font-medium text-gray-500 mb-1">
@@ -763,7 +892,7 @@ export default function ImageProcessor() {
                     </h3>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={activeImage.originalUrl}
+                      src={activeImg.originalUrl}
                       alt="Original"
                       className="w-full rounded-lg border border-gray-800"
                     />
@@ -774,7 +903,7 @@ export default function ImageProcessor() {
                     </h3>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={activeImage.depthUrl}
+                      src={activeImg.depthUrl}
                       alt="Depth"
                       className="w-full rounded-lg border border-gray-800"
                     />
@@ -789,8 +918,7 @@ export default function ImageProcessor() {
                     />
                   </div>
                 </div>
-
-                {activeImage.serverId && (
+                {activeImg.serverId && (
                   <p className="text-[10px] text-green-600/70 text-center">
                     Saved online
                   </p>
@@ -798,20 +926,21 @@ export default function ImageProcessor() {
               </div>
             )}
 
-            {activeImage &&
-              (activeImage.stage === "queued" ||
-                activeImage.stage === "processing") && (
+            {/* IMAGE: processing/queued */}
+            {activeImg &&
+              (activeImg.stage === "queued" ||
+                activeImg.stage === "processing") && (
                 <div className="text-center py-12">
                   <div className="inline-block w-10 h-10 border-[3px] border-cyan-500 border-t-transparent rounded-full animate-spin mb-3" />
                   <p className="text-sm text-gray-400">
-                    {activeImage.stage === "queued"
+                    {activeImg.stage === "queued"
                       ? "Waiting in queue..."
                       : "Estimating depth..."}
                   </p>
                   <div className="mt-4 max-w-xs mx-auto opacity-40">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={activeImage.originalUrl}
+                      src={activeImg.originalUrl}
                       alt=""
                       className="w-full rounded-lg"
                     />
@@ -819,67 +948,51 @@ export default function ImageProcessor() {
                 </div>
               )}
 
-            {activeImage?.stage === "error" && (
-              <ErrorCard
-                error={activeImage.error}
-                onRemove={() => removeJob(activeImage.clientId, "image")}
-              />
-            )}
-
-            {/* ── VIDEO VIEWER ── */}
-            {activeVideo?.stage === "idle" && (
+            {/* VIDEO: queued */}
+            {activeVid?.stage === "queued" && (
               <div className="text-center py-12 space-y-4">
                 <video
-                  src={activeVideo.originalUrl}
+                  src={activeVid.originalUrl}
                   controls
                   className="max-w-lg mx-auto rounded-lg border border-gray-800"
                 />
-                <div className="flex items-center justify-center gap-3">
-                  <button
-                    onClick={() => runVideoJob(activeVideo.clientId)}
-                    className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    Generate 3D Video
-                  </button>
-                  <button
-                    onClick={() => removeJob(activeVideo.clientId, "video")}
-                    className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    Remove
-                  </button>
+                <div className="flex items-center justify-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-400 rounded-full animate-pulse" />
+                  <span className="text-sm text-gray-400">
+                    Queued &mdash; will start when current job finishes
+                  </span>
                 </div>
-                <p className="text-xs text-gray-500">
-                  Max 60 seconds &middot; 15fps &middot; 720p &middot; Uses{" "}
-                  {quality === "hd" ? "HD" : "Fast"} model
-                </p>
+                <button
+                  onClick={() => removeJob(activeVid.clientId)}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                >
+                  Remove
+                </button>
               </div>
             )}
 
-            {activeVideo?.stage === "processing" && activeVideo.progress && (
+            {/* VIDEO: processing */}
+            {activeVid?.stage === "processing" && activeVid.progress && (
               <div className="text-center py-12 space-y-4">
                 <div className="inline-block w-10 h-10 border-[3px] border-cyan-500 border-t-transparent rounded-full animate-spin mb-2" />
                 <p className="text-sm text-gray-300">
-                  {activeVideo.progress.phase === "processing"
-                    ? `Processing frame ${activeVideo.progress.current} / ${activeVideo.progress.total}`
-                    : `Recording frame ${activeVideo.progress.current} / ${activeVideo.progress.total}`}
+                  {activeVid.progress.phase === "processing"
+                    ? `Processing frame ${activeVid.progress.current} / ${activeVid.progress.total}`
+                    : `Recording frame ${activeVid.progress.current} / ${activeVid.progress.total}`}
                 </p>
                 <div className="max-w-sm mx-auto">
                   <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-cyan-500 rounded-full transition-all duration-200"
                       style={{
-                        width: `${Math.round(
-                          (activeVideo.progress.current /
-                            activeVideo.progress.total) *
-                            100
-                        )}%`,
+                        width: `${Math.round((activeVid.progress.current / activeVid.progress.total) * 100)}%`,
                       }}
                     />
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-500 mt-1 tabular-nums">
                     {Math.round(
-                      (activeVideo.progress.current /
-                        activeVideo.progress.total) *
+                      (activeVid.progress.current /
+                        activeVid.progress.total) *
                         100
                     )}
                     %
@@ -887,14 +1000,18 @@ export default function ImageProcessor() {
                 </div>
                 <button
                   onClick={() => {
-                    videoAbortRef.current?.abort();
+                    const abort = videoAbortRef.current.get(
+                      activeVid.clientId
+                    );
+                    if (abort) abort.abort();
                     setVideoJobs((p) =>
                       p.map((v) =>
-                        v.clientId === activeVideo.clientId
-                          ? { ...v, stage: "idle", progress: undefined }
+                        v.clientId === activeVid.clientId
+                          ? { ...v, stage: "error", error: "Cancelled", progress: undefined }
                           : v
                       )
                     );
+                    processingRef.current = false;
                   }}
                   className="px-4 py-1.5 bg-red-900/50 hover:bg-red-900 border border-red-800 rounded-lg text-xs transition-colors"
                 >
@@ -903,10 +1020,11 @@ export default function ImageProcessor() {
               </div>
             )}
 
-            {activeVideo?.stage === "done" && (
+            {/* VIDEO: done */}
+            {activeVid?.stage === "done" && (
               <div className="text-center py-8 space-y-4">
                 <video
-                  src={activeVideo.resultUrl}
+                  src={activeVid.resultUrl}
                   controls
                   autoPlay
                   loop
@@ -914,30 +1032,46 @@ export default function ImageProcessor() {
                 />
                 <div className="flex justify-center gap-3">
                   <a
-                    href={activeVideo.resultUrl}
-                    download={`3d-${activeVideo.fileName.replace(/\.[^.]+$/, "")}.webm`}
-                    className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors"
+                    href={activeVid.resultUrl}
+                    download={`3d-${activeVid.fileName.replace(/\.[^.]+$/, "")}.webm`}
+                    className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors inline-block"
                   >
                     Download 3D Video
                   </a>
                   <button
-                    onClick={() => removeJob(activeVideo.clientId, "video")}
+                    onClick={() => removeJob(activeVid.clientId)}
                     className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
                   >
                     Remove
                   </button>
                 </div>
+                {activeVid.serverId && (
+                  <p className="text-[10px] text-green-600/70">Saved online</p>
+                )}
               </div>
             )}
 
-            {activeVideo?.stage === "error" && (
-              <ErrorCard
-                error={activeVideo.error}
-                onRemove={() => removeJob(activeVideo.clientId, "video")}
-              />
+            {/* ERROR (both types) */}
+            {(activeImg?.stage === "error" || activeVid?.stage === "error") && (
+              <div className="bg-red-950/40 border border-red-900 rounded-xl p-8 text-center">
+                <p className="text-red-400 text-sm mb-1">
+                  {activeVid?.error === "Cancelled" ? "Cancelled" : "Processing failed"}
+                </p>
+                <p className="text-xs text-red-500/70">
+                  {(activeImg ?? activeVid)?.error}
+                </p>
+                <button
+                  onClick={() =>
+                    removeJob((activeImg ?? activeVid)!.clientId)
+                  }
+                  className="mt-3 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
             )}
 
-            {!activeImage && !activeVideo && allItems.length > 0 && (
+            {!selected && allJobs.length > 0 && (
               <div className="text-center py-12 text-gray-600 text-sm">
                 Select an item
               </div>
@@ -947,7 +1081,7 @@ export default function ImageProcessor() {
       )}
 
       {/* Default intensity */}
-      {allItems.length > 0 && (
+      {allJobs.length > 0 && (
         <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
           <span>Default intensity:</span>
           <input
@@ -961,27 +1095,6 @@ export default function ImageProcessor() {
           <span className="tabular-nums">{globalIntensity}</span>
         </div>
       )}
-    </div>
-  );
-}
-
-function ErrorCard({
-  error,
-  onRemove,
-}: {
-  error?: string;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="bg-red-950/40 border border-red-900 rounded-xl p-8 text-center">
-      <p className="text-red-400 text-sm mb-1">Processing failed</p>
-      <p className="text-xs text-red-500/70">{error}</p>
-      <button
-        onClick={onRemove}
-        className="mt-3 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
-      >
-        Remove
-      </button>
     </div>
   );
 }
