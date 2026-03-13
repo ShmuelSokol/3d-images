@@ -74,13 +74,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   try {
     const jobs = await prisma.image.findMany({
       orderBy: { createdAt: "desc" },
       take: 50,
     });
-    return NextResponse.json(jobs);
+    return NextResponse.json(jobs, {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (err) {
     console.error("Fetch error:", err);
     return NextResponse.json({ error: "Fetch failed" }, { status: 500 });
