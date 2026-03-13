@@ -1,3 +1,6 @@
+// WARNING: DO NOT run prisma db push — shared DB with ocr-hebrew & 3rdBHMK.
+// Use raw SQL migrations (see scripts/migrate.js).
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -9,16 +12,23 @@ datasource db {
 }
 
 model Image {
-  id           String   @id @default(cuid())
-  originalUrl  String
-  depthMapUrl  String?
-  anaglyphUrl  String?
-  fileName     String
-  width        Int
-  height       Int
-  intensity    Float    @default(10)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String   @id @default(cuid())
+  originalUrl String
+  depthMapUrl String?
+  anaglyphUrl String?
+  videoUrl    String?
+  fileName    String
+  width       Int
+  height      Int
+  intensity   Float    @default(10)
+  status      String   @default("pending")
+  error       String?
+  mediaType   String   @default("image")
+  duration    Float?
+  frameCount  Int?
+  framesDone  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@map("td_image")
 }
