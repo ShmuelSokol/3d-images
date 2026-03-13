@@ -206,7 +206,7 @@ export function generateAnaglyphServer(
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const d = sampleDepth(smoothed, depthWidth, depthHeight, x, y, width, height);
-      const shift = d * intensity;
+      const shift = (0.3 + d * 0.7) * intensity;
       shiftMap[y * width + x] = shift;
 
       const leftX = Math.min(Math.max(x + shift, 0), width - 1);
