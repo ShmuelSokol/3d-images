@@ -371,7 +371,7 @@ export default function ImageProcessor() {
                       </button>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <h3 className="text-xs font-medium text-gray-500 mb-1">
                         Original
@@ -382,6 +382,23 @@ export default function ImageProcessor() {
                         alt="Original"
                         className="w-full rounded-lg border border-gray-800"
                       />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-medium text-gray-500 mb-1">
+                        Anaglyph 3D
+                      </h3>
+                      {selected.anaglyphUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={selected.anaglyphUrl}
+                          alt="Anaglyph"
+                          className="w-full rounded-lg border border-gray-800"
+                        />
+                      ) : (
+                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
+                          Processing...
+                        </div>
+                      )}
                     </div>
                     <div>
                       <h3 className="text-xs font-medium text-gray-500 mb-1">
@@ -402,13 +419,13 @@ export default function ImageProcessor() {
                     </div>
                     <div>
                       <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Anaglyph 3D
+                        Distance Map
                       </h3>
-                      {selected.anaglyphUrl ? (
+                      {selected.distanceMapUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element
                         <img
-                          src={selected.anaglyphUrl}
-                          alt="Anaglyph"
+                          src={selected.distanceMapUrl}
+                          alt="Distance"
                           className="w-full rounded-lg border border-gray-800"
                         />
                       ) : (

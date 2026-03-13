@@ -12,6 +12,7 @@ async function main() {
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "framesDone" INT DEFAULT 0`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "colorMode" TEXT NOT NULL DEFAULT 'dubois'`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "fillOcclusion" BOOLEAN NOT NULL DEFAULT true`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "distanceMapUrl" TEXT`,
   ];
 
   for (const sql of statements) {

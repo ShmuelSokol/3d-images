@@ -248,6 +248,106 @@ export function generateAnaglyphServer(
 }
 
 /**
+ * Generate a distance map: depth map with estimated distance labels overlaid.
+ * Uses logarithmic scale: closest ~2ft, farthest ~100ft.
+ */
+export async function generateDistanceMap(
+  depthData: Float32Array,
+  width: number,
+  height: number
+): Promise<Buffer> {
+  // Normalize depth to 0-1
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) {
+    normalized[i] = (depthData[i] - minD) / rangeD;
+  }
+
+  // Create colorized depth map (blue=far, red=close)
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i++) {
+    const d = normalized[i]; // 0=far, 1=close
+    // Blue → Cyan → Green → Yellow → Red
+    let r: number, g: number, b: number;
+    if (d < 0.25) {
+      const t = d / 0.25;
+      r = 0; g = Math.round(t * 255); b = 255;
+    } else if (d < 0.5) {
+      const t = (d - 0.25) / 0.25;
+      r = 0; g = 255; b = Math.round((1 - t) * 255);
+    } else if (d < 0.75) {
+      const t = (d - 0.5) / 0.25;
+      r = Math.round(t * 255); g = 255; b = 0;
+    } else {
+      const t = (d - 0.75) / 0.25;
+      r = 255; g = Math.round((1 - t) * 255); b = 0;
+    }
+    rgba[i * 4] = r;
+    rgba[i * 4 + 1] = g;
+    rgba[i * 4 + 2] = b;
+    rgba[i * 4 + 3] = 255;
+  }
+
+  // Divide depth into bands and find label positions
+  const numBands = 6;
+  const labels: { x: number; y: number; feet: number; d: number }[] = [];
+
+  for (let band = 0; band < numBands; band++) {
+    const lo = band / numBands;
+    const hi = (band + 1) / numBands;
+    let sumX = 0, sumY = 0, count = 0;
+
+    // Sample every 4th pixel for speed
+    for (let y = 0; y < height; y += 4) {
+      for (let x = 0; x < width; x += 4) {
+        const d = normalized[y * width + x];
+        if (d >= lo && d < hi) {
+          sumX += x;
+          sumY += y;
+          count++;
+        }
+      }
+    }
+
+    if (count > 0) {
+      const cx = Math.round(sumX / count);
+      const cy = Math.round(sumY / count);
+      const midD = (lo + hi) / 2;
+      // Log scale: d=0 → 100ft, d=1 → 2ft
+      const feet = Math.round(2 + (1 - midD) * 98);
+      labels.push({ x: cx, y: cy, feet, d: midD });
+    }
+  }
+
+  // Build SVG overlay with distance labels
+  const fontSize = Math.max(14, Math.round(Math.min(width, height) / 25));
+  const labelsSvg = labels
+    .map(
+      (l) =>
+        `<g>
+          <rect x="${l.x - fontSize * 1.2}" y="${l.y - fontSize * 0.8}" width="${fontSize * 2.8}" height="${fontSize * 1.4}" rx="4" fill="rgba(0,0,0,0.7)"/>
+          <text x="${l.x}" y="${l.y + fontSize * 0.3}" font-family="Arial,sans-serif" font-size="${fontSize}" font-weight="bold" fill="white" text-anchor="middle">${l.feet}ft</text>
+        </g>`
+    )
+    .join("\n");
+
+  const svg = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">${labelsSvg}</svg>`
+  );
+
+  // Composite: colorized depth + SVG labels
+  return sharp(rgba, { raw: { width, height, channels: 4 } })
+    .composite([{ input: svg, top: 0, left: 0 }])
+    .png()
+    .toBuffer();
+}
+
+/**
  * Render a depth map Float32Array as a grayscale PNG buffer.
  */
 export async function depthToPng(

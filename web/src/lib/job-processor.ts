@@ -4,6 +4,7 @@ import { getSupabase } from "./supabase";
 import { estimateDepth } from "./depth-estimator";
 import {
   generateAnaglyphServer,
+  generateDistanceMap,
   decodeToRaw,
   rawToPng,
   depthToPng,
@@ -67,15 +68,16 @@ async function processImageJob(
   );
 
   // Encode results
-  const [anaglyphPng, depthPng] = await Promise.all([
+  const [anaglyphPng, depthPng, distanceMapPng] = await Promise.all([
     rawToPng(anaglyph),
     depthToPng(depth.data, depth.width, depth.height),
+    generateDistanceMap(depth.data, depth.width, depth.height),
   ]);
 
   // Upload to Supabase
   const supabase = getSupabase();
 
-  const [anaUpload, depthUpload] = await Promise.all([
+  const [anaUpload, depthUpload, distUpload] = await Promise.all([
     supabase.storage
       .from("3d-images")
       .upload(`anaglyph/${jobId}-anaglyph.png`, anaglyphPng, {
@@ -88,10 +90,17 @@ async function processImageJob(
         contentType: "image/png",
         upsert: true,
       }),
+    supabase.storage
+      .from("3d-images")
+      .upload(`distance/${jobId}-distance.png`, distanceMapPng, {
+        contentType: "image/png",
+        upsert: true,
+      }),
   ]);
 
   if (anaUpload.error) throw new Error(`Anaglyph upload: ${anaUpload.error.message}`);
   if (depthUpload.error) throw new Error(`Depth upload: ${depthUpload.error.message}`);
+  if (distUpload.error) throw new Error(`Distance map upload: ${distUpload.error.message}`);
 
   const anaglyphUrl = supabase.storage
     .from("3d-images")
@@ -101,12 +110,17 @@ async function processImageJob(
     .from("3d-images")
     .getPublicUrl(`depth/${jobId}-depth.png`).data.publicUrl;
 
+  const distanceMapUrl = supabase.storage
+    .from("3d-images")
+    .getPublicUrl(`distance/${jobId}-distance.png`).data.publicUrl;
+
   // Update DB
   await prisma.image.update({
     where: { id: jobId },
     data: {
       anaglyphUrl,
       depthMapUrl,
+      distanceMapUrl,
       width: w,
       height: h,
       status: "done",

@@ -14,8 +14,9 @@ datasource db {
 model Image {
   id          String   @id @default(cuid())
   originalUrl String
-  depthMapUrl String?
-  anaglyphUrl String?
+  depthMapUrl    String?
+  distanceMapUrl String?
+  anaglyphUrl    String?
   videoUrl    String?
   fileName    String
   width       Int
