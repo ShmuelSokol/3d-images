@@ -10,6 +10,8 @@ async function main() {
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS duration FLOAT`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "frameCount" INT`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "framesDone" INT DEFAULT 0`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "colorMode" TEXT NOT NULL DEFAULT 'dubois'`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "fillOcclusion" BOOLEAN NOT NULL DEFAULT true`,
   ];
 
   for (const sql of statements) {

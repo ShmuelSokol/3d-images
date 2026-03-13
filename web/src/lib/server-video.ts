@@ -19,7 +19,9 @@ export async function processVideoJob(
   jobId: string,
   originalUrl: string,
   intensity: number,
-  model: string
+  model: string,
+  colorMode: string = "dubois",
+  fillOcclusion: boolean = true
 ): Promise<{ videoUrl: string }> {
   const jobDir = join(TMP_DIR, jobId);
   const framesDir = join(jobDir, "frames");
@@ -98,7 +100,9 @@ export async function processVideoJob(
         depth.data,
         depth.width,
         depth.height,
-        intensity
+        intensity,
+        (colorMode === "classic" ? "classic" : "dubois"),
+        fillOcclusion
       );
 
       // Save processed frame

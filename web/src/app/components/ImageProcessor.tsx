@@ -14,6 +14,8 @@ interface Job {
   width: number;
   height: number;
   intensity: number;
+  colorMode: string;
+  fillOcclusion: boolean;
   status: string;
   error: string | null;
   mediaType: string;
@@ -30,6 +32,8 @@ export default function ImageProcessor() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [intensity, setIntensity] = useState(10);
+  const [colorMode, setColorMode] = useState("dubois");
+  const [fillOcclusion, setFillOcclusion] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -73,6 +77,8 @@ export default function ImageProcessor() {
         const fd = new FormData();
         fd.append("file", f);
         fd.append("intensity", intensity.toString());
+        fd.append("colorMode", colorMode);
+        fd.append("fillOcclusion", fillOcclusion.toString());
 
         const res = await fetch("/api/jobs", { method: "POST", body: fd });
         if (res.ok) {
@@ -155,7 +161,7 @@ export default function ImageProcessor() {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span>3D Intensity (for new uploads):</span>
+          <span>Intensity:</span>
           <input
             type="range"
             min="1"
@@ -168,6 +174,28 @@ export default function ImageProcessor() {
             {intensity}
           </span>
         </div>
+
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <span>Color:</span>
+          <select
+            value={colorMode}
+            onChange={(e) => setColorMode(e.target.value)}
+            className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300"
+          >
+            <option value="dubois">Dubois (better color)</option>
+            <option value="classic">Classic red/cyan</option>
+          </select>
+        </div>
+
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={fillOcclusion}
+            onChange={(e) => setFillOcclusion(e.target.checked)}
+            className="accent-cyan-500"
+          />
+          Fill gaps
+        </label>
 
         <div className="flex-1" />
 

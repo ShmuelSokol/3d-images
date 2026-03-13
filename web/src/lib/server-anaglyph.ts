@@ -81,18 +81,104 @@ function sampleBilinear(
 }
 
 /**
+ * Sample a smoothed depth value at image coordinates.
+ */
+function sampleDepth(
+  smoothed: Float32Array,
+  depthWidth: number,
+  depthHeight: number,
+  imgX: number,
+  imgY: number,
+  imgWidth: number,
+  imgHeight: number
+): number {
+  const dxf = (imgX / imgWidth) * (depthWidth - 1);
+  const dyf = (imgY / imgHeight) * (depthHeight - 1);
+  const dx0 = Math.floor(dxf);
+  const dx1 = Math.min(dx0 + 1, depthWidth - 1);
+  const dy0 = Math.floor(dyf);
+  const dy1 = Math.min(dy0 + 1, depthHeight - 1);
+  const fx = dxf - dx0;
+  const fy = dyf - dy0;
+  return (
+    smoothed[dy0 * depthWidth + dx0] * (1 - fx) * (1 - fy) +
+    smoothed[dy0 * depthWidth + dx1] * fx * (1 - fy) +
+    smoothed[dy1 * depthWidth + dx0] * (1 - fx) * fy +
+    smoothed[dy1 * depthWidth + dx1] * fx * fy
+  );
+}
+
+/**
+ * Fill disoccluded (gap) pixels by scanning from the edges inward.
+ * When a pixel was sampled from a clamped position, replace it with
+ * the nearest valid neighbor on that side.
+ */
+function fillOcclusions(
+  out: Buffer,
+  width: number,
+  height: number,
+  shiftMap: Float32Array
+): void {
+  for (let y = 0; y < height; y++) {
+    // Left-to-right pass: fill pixels where shift pushed source out of left edge
+    let lastValidR = 0, lastValidG = 0, lastValidB = 0;
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      const shift = shiftMap[y * width + x];
+      if (x + shift <= 0.5) {
+        // This pixel's red channel was clamped — fill from neighbor
+        out[idx] = lastValidR;
+      } else {
+        lastValidR = out[idx];
+      }
+      if (x - shift <= 0.5) {
+        out[idx + 1] = lastValidG;
+        out[idx + 2] = lastValidB;
+      } else {
+        lastValidG = out[idx + 1];
+        lastValidB = out[idx + 2];
+      }
+    }
+    // Right-to-left pass: fill pixels where shift pushed source out of right edge
+    lastValidR = 0; lastValidG = 0; lastValidB = 0;
+    for (let x = width - 1; x >= 0; x--) {
+      const idx = (y * width + x) * 4;
+      const shift = shiftMap[y * width + x];
+      if (x + shift >= width - 1.5) {
+        out[idx] = lastValidR;
+      } else {
+        lastValidR = out[idx];
+      }
+      if (x - shift >= width - 1.5) {
+        out[idx + 1] = lastValidG;
+        out[idx + 2] = lastValidB;
+      } else {
+        lastValidG = out[idx + 1];
+        lastValidB = out[idx + 2];
+      }
+    }
+  }
+}
+
+export type ColorMode = "classic" | "dubois";
+
+/**
  * Generate an anaglyph 3D image from raw RGBA pixels + depth map.
- * Uses Gaussian-smoothed depth, sub-pixel interpolation, and edge-aware blending.
+ * Supports classic red/cyan and Dubois optimized color modes.
+ * Optionally fills disocclusion gaps.
  */
 export function generateAnaglyphServer(
   image: RawImage,
   depthData: Float32Array,
   depthWidth: number,
   depthHeight: number,
-  intensity: number = 10
+  intensity: number = 10,
+  colorMode: ColorMode = "dubois",
+  doFillOcclusion: boolean = true
 ): RawImage {
   const { data: pixels, width, height } = image;
   const out = Buffer.alloc(width * height * 4);
+  const shiftMap = new Float32Array(width * height);
 
   // Normalize depth to 0-1
   let minD = Infinity,
@@ -111,39 +197,51 @@ export function generateAnaglyphServer(
   const blurRadius = Math.max(2, Math.round(Math.min(depthWidth, depthHeight) / 150));
   const smoothed = blurDepth(normalized, depthWidth, depthHeight, blurRadius);
 
+  // Dubois optimized matrices (from Eric Dubois' 2001 paper)
+  // Left eye (red channel contribution from RGB)
+  const duboisL = [0.4561, 0.500484, 0.176381, -0.0434706, -0.0879388, -0.00155529, -0.0152159, -0.0205971, -0.00546856];
+  // Right eye (cyan channel contribution from RGB)
+  const duboisR = [-0.0434706, -0.0879388, -0.00155529, 0.378476, 0.73364, -0.0184503, -0.0721527, -0.112961, 1.2264];
+
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      // Map to depth coordinates with bilinear sampling
-      const dxf = (x / width) * (depthWidth - 1);
-      const dyf = (y / height) * (depthHeight - 1);
-      const dx0 = Math.floor(dxf);
-      const dx1 = Math.min(dx0 + 1, depthWidth - 1);
-      const dy0 = Math.floor(dyf);
-      const dy1 = Math.min(dy0 + 1, depthHeight - 1);
-      const fx = dxf - dx0;
-      const fy = dyf - dy0;
-
-      // Bilinear interpolation of smoothed depth
-      const d =
-        smoothed[dy0 * depthWidth + dx0] * (1 - fx) * (1 - fy) +
-        smoothed[dy0 * depthWidth + dx1] * fx * (1 - fy) +
-        smoothed[dy1 * depthWidth + dx0] * (1 - fx) * fy +
-        smoothed[dy1 * depthWidth + dx1] * fx * fy;
-
-      // Proportional shift: far=0 (at screen), close=max (pops out)
+      const d = sampleDepth(smoothed, depthWidth, depthHeight, x, y, width, height);
       const shift = d * intensity;
+      shiftMap[y * width + x] = shift;
 
       const leftX = Math.min(Math.max(x + shift, 0), width - 1);
       const rightX = Math.min(Math.max(x - shift, 0), width - 1);
 
       const outIdx = (y * width + x) * 4;
 
-      // Sub-pixel sampled colors for smooth result
-      out[outIdx] = Math.round(sampleBilinear(pixels, width, height, leftX, y, 0));       // Red from left eye
-      out[outIdx + 1] = Math.round(sampleBilinear(pixels, width, height, rightX, y, 1));  // Green from right eye
-      out[outIdx + 2] = Math.round(sampleBilinear(pixels, width, height, rightX, y, 2));  // Blue from right eye
+      // Sample left and right eye colors
+      const lR = sampleBilinear(pixels, width, height, leftX, y, 0) / 255;
+      const lG = sampleBilinear(pixels, width, height, leftX, y, 1) / 255;
+      const lB = sampleBilinear(pixels, width, height, leftX, y, 2) / 255;
+      const rR = sampleBilinear(pixels, width, height, rightX, y, 0) / 255;
+      const rG = sampleBilinear(pixels, width, height, rightX, y, 1) / 255;
+      const rB = sampleBilinear(pixels, width, height, rightX, y, 2) / 255;
+
+      if (colorMode === "dubois") {
+        // Dubois optimized anaglyph — preserves more color
+        const oR = duboisL[0]*lR + duboisL[1]*lG + duboisL[2]*lB + duboisR[0]*rR + duboisR[1]*rG + duboisR[2]*rB;
+        const oG = duboisL[3]*lR + duboisL[4]*lG + duboisL[5]*lB + duboisR[3]*rR + duboisR[4]*rG + duboisR[5]*rB;
+        const oB = duboisL[6]*lR + duboisL[7]*lG + duboisL[8]*lB + duboisR[6]*rR + duboisR[7]*rG + duboisR[8]*rB;
+        out[outIdx]     = Math.round(Math.min(Math.max(oR, 0), 1) * 255);
+        out[outIdx + 1] = Math.round(Math.min(Math.max(oG, 0), 1) * 255);
+        out[outIdx + 2] = Math.round(Math.min(Math.max(oB, 0), 1) * 255);
+      } else {
+        // Classic red/cyan
+        out[outIdx]     = Math.round(lR * 255);
+        out[outIdx + 1] = Math.round(rG * 255);
+        out[outIdx + 2] = Math.round(rB * 255);
+      }
       out[outIdx + 3] = 255;
     }
+  }
+
+  if (doFillOcclusion) {
+    fillOcclusions(out, width, height, shiftMap);
   }
 
   return { data: out, width, height };

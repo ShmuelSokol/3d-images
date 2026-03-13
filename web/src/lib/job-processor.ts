@@ -21,7 +21,9 @@ async function processImageJob(
   jobId: string,
   originalUrl: string,
   intensity: number,
-  quality: string
+  quality: string,
+  colorMode: string,
+  fillOcclusion: boolean
 ): Promise<void> {
   const model = MODELS[quality] || MODELS.hd;
 
@@ -59,7 +61,9 @@ async function processImageJob(
     depth.data,
     depth.width,
     depth.height,
-    intensity
+    intensity,
+    (colorMode === "classic" ? "classic" : "dubois"),
+    fillOcclusion
   );
 
   // Encode results
@@ -125,7 +129,9 @@ export async function processJob(jobId: string): Promise<void> {
         jobId,
         job.originalUrl,
         job.intensity,
-        MODELS.hd
+        MODELS.hd,
+        job.colorMode,
+        job.fillOcclusion
       );
       await prisma.image.update({
         where: { id: jobId },
@@ -133,7 +139,7 @@ export async function processJob(jobId: string): Promise<void> {
       });
       console.log(`[job] Video done: ${jobId}`);
     } else {
-      await processImageJob(jobId, job.originalUrl, job.intensity, "hd");
+      await processImageJob(jobId, job.originalUrl, job.intensity, "hd", job.colorMode, job.fillOcclusion);
     }
   } catch (err) {
     const msg = (err as Error).message || "Processing failed";

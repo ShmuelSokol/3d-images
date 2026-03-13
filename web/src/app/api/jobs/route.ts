@@ -13,6 +13,8 @@ export async function POST(req: NextRequest) {
     }
 
     const intensity = parseFloat(formData.get("intensity") as string) || 10;
+    const colorMode = (formData.get("colorMode") as string) || "dubois";
+    const fillOcclusion = (formData.get("fillOcclusion") as string) !== "false";
     const isVideo = file.type.startsWith("video/");
     const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -59,6 +61,8 @@ export async function POST(req: NextRequest) {
         width,
         height,
         intensity,
+        colorMode,
+        fillOcclusion,
         status: "pending",
         mediaType: isVideo ? "video" : "image",
       },

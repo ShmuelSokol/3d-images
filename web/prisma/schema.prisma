@@ -20,8 +20,10 @@ model Image {
   fileName    String
   width       Int
   height      Int
-  intensity   Float    @default(10)
-  status      String   @default("pending")
+  intensity     Float    @default(10)
+  colorMode     String   @default("dubois")
+  fillOcclusion Boolean  @default(true)
+  status        String   @default("pending")
   error       String?
   mediaType   String   @default("image")
   duration    Float?
