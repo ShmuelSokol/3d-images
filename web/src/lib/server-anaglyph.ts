@@ -106,9 +106,6 @@ export function generateAnaglyphServer(
   for (let i = 0; i < depthData.length; i++) {
     normalized[i] = (depthData[i] - minD) / rangeD;
   }
-  // Use median depth as convergence plane — robust to skewed distributions
-  const sorted = Float32Array.from(normalized).sort();
-  const depthMedian = sorted[Math.floor(sorted.length / 2)];
 
   // Smooth depth map to reduce noisy edges
   const blurRadius = Math.max(2, Math.round(Math.min(depthWidth, depthHeight) / 150));
@@ -133,8 +130,8 @@ export function generateAnaglyphServer(
         smoothed[dy1 * depthWidth + dx0] * (1 - fx) * fy +
         smoothed[dy1 * depthWidth + dx1] * fx * fy;
 
-      // Sub-pixel shift centered on median depth
-      const shift = (d - depthMedian) * intensity;
+      // Proportional shift: far=0 (at screen), close=max (pops out)
+      const shift = d * intensity;
 
       const leftX = Math.min(Math.max(x + shift, 0), width - 1);
       const rightX = Math.min(Math.max(x - shift, 0), width - 1);
