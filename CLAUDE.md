@@ -1,42 +1,48 @@
 # 3D Image Generator
 
 ## Overview
-Upload photos or videos → AI estimates depth per pixel → generates anaglyph 3D images/videos (red/cyan glasses).
+Upload photos or videos → server-side AI estimates depth per pixel → generates anaglyph 3D images/videos (red/cyan glasses). Users can upload and close the page — processing continues on the server.
 
 ## Stack
 - **Framework**: Next.js 14, TypeScript, TailwindCSS
 - **Database**: Prisma 5 + Supabase PostgreSQL
 - **Storage**: Supabase Storage (bucket: `3d-images`)
-- **Deployment**: Railway (standalone Docker)
-- **Depth AI**: Transformers.js via CDN in Web Worker
-  - HD mode: `Xenova/depth-anything-base-hf` (~99MB, better face/detail accuracy)
-  - Fast mode: `Xenova/depth-anything-small-hf` (~25MB, faster processing)
+- **Deployment**: Railway (standalone Docker, node:18-slim)
+- **Depth AI**: `@xenova/transformers` + `onnxruntime-node` (server-side)
+  - Model: `Xenova/depth-anything-base-hf` (~99MB, cached in TRANSFORMERS_CACHE)
+- **Video**: ffmpeg for frame extraction + reassembly (MP4 output)
 
 ## Architecture
-1. Web Worker preloads depth model on page load (CDN, cached in IndexedDB)
-2. User uploads images/videos → thumbnails appear instantly (blob URLs)
-3. Images: depth estimation in worker → anaglyph on main thread canvas → auto-save to Supabase
-4. Videos: frame extraction → per-frame depth + anaglyph → MediaRecorder → WebM output
-5. Intensity slider redraws anaglyph via direct canvas putImageData (instant, no encoding)
-6. Download All bundles results as ZIP via JSZip
+1. User uploads images/videos via frontend → files stored in Supabase Storage
+2. DB record created with `status: "pending"` → API returns immediately
+3. Background job queue picks up pending jobs one at a time
+4. **Images**: download → sharp decode → depth estimation → anaglyph → upload results
+5. **Videos**: download → ffmpeg frame extraction → per-frame depth+anaglyph → ffmpeg reassembly → upload MP4
+6. Frontend polls `/api/jobs` every 3s (active) or 30s (idle) for status updates
+7. `instrumentation.ts` resets stuck jobs on server restart
 
 ## Key Files
-- `public/depth-worker.js` — Web Worker for depth estimation (loads Transformers.js from CDN)
-- `src/app/components/ImageProcessor.tsx` — main client component (images, videos, ZIP)
-- `src/lib/anaglyph.ts` — canvas-based anaglyph generation algorithm
-- `src/lib/video-processor.ts` — video frame extraction, processing, MediaRecorder encoding
-- `src/app/api/images/route.ts` — upload/list images API
-- `src/app/api/images/[id]/save-results/route.ts` — save depth map + anaglyph
-- `prisma/schema.prisma` — Image model (td_image table)
-- `Dockerfile` — Railway deployment
+- `src/lib/depth-estimator.ts` — singleton depth estimation pipeline (Node.js)
+- `src/lib/server-anaglyph.ts` — anaglyph generation with raw RGBA buffers (sharp)
+- `src/lib/server-video.ts` — ffmpeg-based video processing
+- `src/lib/job-processor.ts` — orchestrates image/video job processing
+- `src/lib/job-queue.ts` — DB-backed job queue (one at a time, fire-and-forget)
+- `src/instrumentation.ts` — startup hook: resets stuck jobs, kicks queue
+- `src/app/components/ImageProcessor.tsx` — frontend: upload form + polling dashboard
+- `src/app/api/jobs/route.ts` — POST (upload + create job) + GET (list jobs)
+- `src/app/api/jobs/[id]/route.ts` — GET (single job) + DELETE
+- `src/lib/anaglyph.ts` — original client-side algorithm (kept for reference)
+- `prisma/schema.prisma` — Image model with status/mediaType/progress fields
+- `Dockerfile` — node:18-slim + ffmpeg + onnxruntime-node
+- `scripts/migrate.js` — raw SQL migrations (DO NOT use prisma db push)
 
 ## Dev Commands
 ```bash
 cd web
-npm run dev          # Start dev server
-npx prisma@5 db push  # Push schema to Supabase
-npx prisma@5 generate # Generate Prisma client
+npm run dev           # Start dev server
+npx prisma@5 generate # Generate Prisma client (NEVER use db push — shared DB)
 npx prisma@5 studio   # Browse data
+node scripts/migrate.js # Run DB migrations
 ```
 
 ## Deploy
@@ -47,9 +53,13 @@ railway up web --path-as-root --detach
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5
-- Alpine Docker needs `apk add openssl` for Prisma
+- **DO NOT run `prisma db push`** — shared DB with ocr-hebrew & 3rdBHMK, use raw SQL
 - NEXT_PUBLIC_ vars must be available at build time
 - Health check at `/api/health`
 - DB table prefix: `td_` (3d = td)
-- `@xenova/transformers` is NOT an npm dependency — loaded via CDN in the worker
-- Video: max 60s, 15fps, 720p, output is WebM
+- Dockerfile uses node:18-slim (Debian), NOT Alpine — onnxruntime-node needs glibc
+- `@xenova/transformers` is now an npm dependency (server-side), NOT CDN-loaded
+- Must be in `experimental.serverComponentsExternalPackages` in next.config.mjs
+- Video: max 60s, 15fps, 720p, output is MP4 (H.264)
+- Model downloads ~99MB on first job (cached in /app/.cache on Railway)
+- NODE_OPTIONS="--max-old-space-size=512" set in Dockerfile
