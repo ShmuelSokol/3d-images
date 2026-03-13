@@ -75,14 +75,10 @@ export async function processVideoJob(
 
     for (let i = 0; i < frameFiles.length; i++) {
       const framePath = join(framesDir, frameFiles[i]);
-      const frameBuffer = readFileSync(framePath);
+      const frameBuffer = Buffer.from(readFileSync(framePath));
 
-      // Write frame to temp file for depth estimation
-      const tmpFramePath = join(jobDir, "tmp-frame.jpg");
-      writeFileSync(tmpFramePath, frameBuffer);
-
-      // Depth estimation
-      const depth = await estimateDepth(`file://${tmpFramePath}`, model);
+      // Depth estimation (pass buffer directly, converted to data URL internally)
+      const depth = await estimateDepth(frameBuffer, model);
 
       // Decode frame to raw RGBA
       const raw = await decodeToRaw(frameBuffer);

@@ -37,17 +37,21 @@ async function ensureModel(model: string) {
 }
 
 /**
- * Estimate depth from an image URL or file path.
- * Returns a Float32Array of depth values + dimensions.
+ * Estimate depth from a JPEG/PNG buffer.
+ * Converts to data URL since Node.js fetch doesn't support file:// URLs.
  */
 export async function estimateDepth(
-  imageUrl: string,
+  imageBuffer: Buffer,
   model: string = "Xenova/depth-anything-base-hf"
 ): Promise<DepthResult> {
   await ensureModel(model);
 
+  // Convert buffer to data URL (Node.js fetch can't handle file:// URLs)
+  const base64 = imageBuffer.toString("base64");
+  const dataUrl = `data:image/jpeg;base64,${base64}`;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any = await estimator(imageUrl);
+  const raw: any = await estimator(dataUrl);
   const r = Array.isArray(raw) ? raw[0] : raw;
 
   const src = r.predicted_depth.data;

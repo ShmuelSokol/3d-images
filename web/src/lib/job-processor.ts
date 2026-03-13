@@ -9,8 +9,8 @@ import {
   depthToPng,
 } from "./server-anaglyph";
 import { processVideoJob } from "./server-video";
-import { writeFileSync, mkdirSync } from "fs";
-import { join } from "path";
+
+
 
 const MODELS: Record<string, string> = {
   fast: "Xenova/depth-anything-small-hf",
@@ -44,16 +44,11 @@ async function processImageJob(
     resized = Buffer.from(await sharp(inputBuffer).resize(w, h).jpeg({ quality: 85 }).toBuffer());
   }
 
-  // Save temp file for depth estimation
-  const tmpDir = "/tmp/3d-jobs";
-  mkdirSync(tmpDir, { recursive: true });
-  const tmpPath = join(tmpDir, `${jobId}.jpg`);
-  // Ensure we write a JPEG for depth estimation
-  const jpegBuf = await sharp(resized).jpeg({ quality: 85 }).toBuffer();
-  writeFileSync(tmpPath, jpegBuf);
+  // Convert to JPEG buffer for depth estimation
+  const jpegBuf = Buffer.from(await sharp(resized).jpeg({ quality: 85 }).toBuffer());
 
   // Depth estimation
-  const depth = await estimateDepth(`file://${tmpPath}`, model);
+  const depth = await estimateDepth(jpegBuf, model);
 
   // Decode to raw RGBA for anaglyph
   const raw = await decodeToRaw(resized);
@@ -113,14 +108,6 @@ async function processImageJob(
       status: "done",
     },
   });
-
-  // Cleanup temp
-  try {
-    const { rmSync } = await import("fs");
-    rmSync(tmpPath, { force: true });
-  } catch {
-    /* ignore */
-  }
 
   console.log(`[job] Image done: ${jobId}`);
 }
