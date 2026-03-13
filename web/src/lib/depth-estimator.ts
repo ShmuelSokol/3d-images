@@ -44,7 +44,7 @@ async function ensureModel(model: string) {
  */
 export async function estimateDepth(
   imageBuffer: Buffer,
-  model: string = "Xenova/depth-anything-base-hf"
+  model: string = "Xenova/depth-anything-v2-base-hf"
 ): Promise<DepthResult> {
   await ensureModel(model);
 

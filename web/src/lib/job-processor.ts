@@ -13,8 +13,8 @@ import { processVideoJob } from "./server-video";
 
 
 const MODELS: Record<string, string> = {
-  fast: "Xenova/depth-anything-small-hf",
-  hd: "Xenova/depth-anything-base-hf",
+  fast: "Xenova/depth-anything-v2-small-hf",
+  hd: "Xenova/depth-anything-v2-base-hf",
 };
 
 async function processImageJob(
