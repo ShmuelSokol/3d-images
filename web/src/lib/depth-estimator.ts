@@ -1,4 +1,4 @@
-import { pipeline, RawImage, type PipelineType } from "@xenova/transformers";
+import { pipeline, RawImage } from "@huggingface/transformers";
 import sharp from "sharp";
 
 export interface DepthResult {
@@ -29,8 +29,9 @@ async function ensureModel(model: string) {
   loading = (async () => {
     console.log(`[depth] Loading model: ${model}`);
     estimator = await pipeline(
-      "depth-estimation" as PipelineType,
-      model
+      "depth-estimation",
+      model,
+      { device: "cpu" }
     );
     console.log(`[depth] Model ready: ${model}`);
   })();
@@ -44,7 +45,7 @@ async function ensureModel(model: string) {
  */
 export async function estimateDepth(
   imageBuffer: Buffer,
-  model: string = "Xenova/depth-anything-large-hf"
+  model: string = "onnx-community/depth-anything-v2-large"
 ): Promise<DepthResult> {
   await ensureModel(model);
 

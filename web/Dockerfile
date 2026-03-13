@@ -44,7 +44,7 @@ COPY --from=builder /app/prisma ./prisma
 
 # Native modules needed at runtime
 COPY --from=builder /app/node_modules/onnxruntime-node ./node_modules/onnxruntime-node
-COPY --from=builder /app/node_modules/@xenova ./node_modules/@xenova
+COPY --from=builder /app/node_modules/@huggingface ./node_modules/@huggingface
 COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
 
 USER nextjs

@@ -4,7 +4,7 @@ const nextConfig = {
   experimental: {
     instrumentationHook: true,
     serverComponentsExternalPackages: [
-      "@xenova/transformers",
+      "@huggingface/transformers",
       "onnxruntime-node",
       "sharp",
     ],
