@@ -4,28 +4,49 @@ env.allowLocalModels = false;
 env.useBrowserCache = true;
 
 let estimator = null;
+let currentModel = null;
 let loading = null;
 
-async function ensureModel() {
-  if (estimator) return;
-  if (loading) { await loading; return; }
+async function ensureModel(model) {
+  if (estimator && currentModel === model) return;
+
+  // Different model requested — reset
+  if (currentModel !== model) {
+    estimator = null;
+    loading = null;
+  }
+
+  if (loading) {
+    await loading;
+    return;
+  }
+
+  currentModel = model;
   loading = (async () => {
-    estimator = await pipeline('depth-estimation', 'Xenova/depth-anything-small-hf', {
+    self.postMessage({ type: 'model-progress', status: 'initiate', model });
+    estimator = await pipeline('depth-estimation', model, {
       progress_callback: (p) => self.postMessage({ type: 'model-progress', ...p }),
     });
-    self.postMessage({ type: 'model-ready' });
+    self.postMessage({ type: 'model-ready', model });
   })();
   await loading;
 }
 
-// Start preloading immediately when worker is created
-ensureModel();
+// Preload default model immediately
+ensureModel('Xenova/depth-anything-base-hf');
 
 self.onmessage = async (e) => {
-  if (e.data.type === 'estimate') {
-    const { id, imageBuffer } = e.data;
+  const { type } = e.data;
+
+  if (type === 'set-model') {
+    await ensureModel(e.data.model);
+    return;
+  }
+
+  if (type === 'estimate') {
+    const { id, imageBuffer, model } = e.data;
     try {
-      await ensureModel();
+      await ensureModel(model || 'Xenova/depth-anything-base-hf');
 
       const blob = new Blob([imageBuffer], { type: 'image/jpeg' });
       const url = URL.createObjectURL(blob);
@@ -48,7 +69,11 @@ self.onmessage = async (e) => {
         [out.buffer]
       );
     } catch (err) {
-      self.postMessage({ type: 'error', id, error: err.message || 'Depth estimation failed' });
+      self.postMessage({
+        type: 'error',
+        id,
+        error: err.message || 'Depth estimation failed',
+      });
     }
   }
 };
