@@ -14,7 +14,7 @@ import { processVideoJob } from "./server-video";
 
 const MODELS: Record<string, string> = {
   fast: "onnx-community/depth-anything-v2-small",
-  hd: "onnx-community/depth-anything-v2-large",
+  hd: "onnx-community/depth-anything-v2-base",
 };
 
 async function processImageJob(
