@@ -100,6 +100,25 @@ export default function ImageProcessor() {
     }
   }
 
+  // ── Download (cross-origin safe) ──
+  async function handleDownload(url: string, filename: string) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Fallback: open in new tab
+      window.open(url, "_blank");
+    }
+  }
+
   // ── Derived ──
   const selected = jobs.find((j) => j.id === selectedId) ?? null;
   const activeCount = jobs.filter(
@@ -284,13 +303,12 @@ export default function ImageProcessor() {
                     </h2>
                     <div className="flex gap-2">
                       {selected.anaglyphUrl && (
-                        <a
-                          href={selected.anaglyphUrl}
-                          download={`3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`}
+                        <button
+                          onClick={() => handleDownload(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
                           className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
                         >
                           Download 3D
-                        </a>
+                        </button>
                       )}
                       <button
                         onClick={() => handleDelete(selected.id)}
@@ -367,13 +385,12 @@ export default function ImageProcessor() {
                   )}
                   <div className="flex justify-center gap-3">
                     {selected.videoUrl && (
-                      <a
-                        href={selected.videoUrl}
-                        download={`3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`}
-                        className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors inline-block"
+                      <button
+                        onClick={() => handleDownload(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
+                        className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors"
                       >
                         Download 3D Video
-                      </a>
+                      </button>
                     )}
                     <button
                       onClick={() => handleDelete(selected.id)}
