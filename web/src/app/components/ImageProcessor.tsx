@@ -3,22 +3,20 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { generateAnaglyph } from "@/lib/anaglyph";
 
-interface DepthResult {
-  depthData: number[];
-  depthWidth: number;
-  depthHeight: number;
+interface DepthData {
+  data: Float32Array;
+  width: number;
+  height: number;
 }
 
 interface ImageJob {
   clientId: string;
   serverId?: string;
-  file: File;
-  stage: "queued" | "uploading" | "depth" | "done" | "error";
-  progress: string;
-  originalDataUrl?: string;
-  depthDataUrl?: string;
-  anaglyphDataUrl?: string;
-  depthResult?: DepthResult;
+  fileName: string;
+  stage: "queued" | "processing" | "done" | "error";
+  originalUrl: string; // blob URL — instant, no encoding
+  depthUrl?: string; // blob URL of depth map
+  depthData?: DepthData;
   originalImageData?: ImageData;
   intensity: number;
   width: number;
@@ -26,359 +24,416 @@ interface ImageJob {
   error?: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let cachedEstimator: any = null;
+// ── Depth map → blob URL (offscreen canvas → blob → URL) ──
+function renderDepthBlob(d: DepthData): Promise<string> {
+  const c = document.createElement("canvas");
+  c.width = d.width;
+  c.height = d.height;
+  const ctx = c.getContext("2d")!;
+  const img = ctx.createImageData(d.width, d.height);
 
-function renderDepthMap(dr: DepthResult): string {
-  const canvas = document.createElement("canvas");
-  canvas.width = dr.depthWidth;
-  canvas.height = dr.depthHeight;
-  const ctx = canvas.getContext("2d")!;
-  const imgData = ctx.createImageData(dr.depthWidth, dr.depthHeight);
-
-  let minD = Infinity,
-    maxD = -Infinity;
-  for (const d of dr.depthData) {
-    if (d < minD) minD = d;
-    if (d > maxD) maxD = d;
+  let lo = Infinity,
+    hi = -Infinity;
+  for (let i = 0; i < d.data.length; i++) {
+    if (d.data[i] < lo) lo = d.data[i];
+    if (d.data[i] > hi) hi = d.data[i];
   }
-  const rangeD = maxD - minD || 1;
-
-  for (let i = 0; i < dr.depthData.length; i++) {
-    const v = Math.round(((dr.depthData[i] - minD) / rangeD) * 255);
-    imgData.data[i * 4] = v;
-    imgData.data[i * 4 + 1] = v;
-    imgData.data[i * 4 + 2] = v;
-    imgData.data[i * 4 + 3] = 255;
+  const range = hi - lo || 1;
+  for (let i = 0; i < d.data.length; i++) {
+    const v = ((d.data[i] - lo) / range) * 255;
+    img.data[i * 4] = v;
+    img.data[i * 4 + 1] = v;
+    img.data[i * 4 + 2] = v;
+    img.data[i * 4 + 3] = 255;
   }
-  ctx.putImageData(imgData, 0, 0);
-  return canvas.toDataURL("image/png");
-}
-
-function renderAnaglyph(
-  originalImageData: ImageData,
-  dr: DepthResult,
-  intensity: number
-): string {
-  const result = generateAnaglyph(
-    originalImageData,
-    new Float32Array(dr.depthData),
-    dr.depthWidth,
-    dr.depthHeight,
-    intensity
-  );
-  const canvas = document.createElement("canvas");
-  canvas.width = originalImageData.width;
-  canvas.height = originalImageData.height;
-  const ctx = canvas.getContext("2d")!;
-  ctx.putImageData(result, 0, 0);
-  return canvas.toDataURL("image/png");
-}
-
-async function saveResults(
-  serverId: string,
-  anaglyphDataUrl: string,
-  depthDataUrl: string,
-  intensity: number
-) {
-  const formData = new FormData();
-
-  // Convert data URLs to blobs
-  const anaRes = await fetch(anaglyphDataUrl);
-  const anaBlob = await anaRes.blob();
-  const depthRes = await fetch(depthDataUrl);
-  const depthBlob = await depthRes.blob();
-
-  formData.append("anaglyph", anaBlob, "anaglyph.png");
-  formData.append("depthMap", depthBlob, "depth.png");
-  formData.append("intensity", intensity.toString());
-
-  await fetch(`/api/images/${serverId}/save-results`, {
-    method: "POST",
-    body: formData,
-  });
+  ctx.putImageData(img, 0, 0);
+  return new Promise((r) => c.toBlob((b) => r(URL.createObjectURL(b!)), "image/png"));
 }
 
 export default function ImageProcessor() {
   const [jobs, setJobs] = useState<ImageJob[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [globalIntensity, setGlobalIntensity] = useState(10);
-  const [selectedJob, setSelectedJob] = useState<string | null>(null);
+  const [modelStatus, setModelStatus] = useState<
+    "idle" | "loading" | "ready"
+  >("idle");
+  const [modelProgress, setModelProgress] = useState(0);
+
+  const workerRef = useRef<Worker | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
+  const rafRef = useRef(0);
 
-  const updateJob = useCallback(
-    (clientId: string, updates: Partial<ImageJob>) => {
-      setJobs((prev) =>
-        prev.map((j) => (j.clientId === clientId ? { ...j, ...updates } : j))
+  // Pending depth requests: id → { imageData, jpegBlob }
+  const pendingRef = useRef<
+    Map<string, { imageData: ImageData; w: number; h: number; jpegBlob: Blob }>
+  >(new Map());
+
+  // Stable ref so worker callback can read latest jobs
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  // ── Worker init + model preload ──
+  useEffect(() => {
+    const w = new Worker("/depth-worker.js", { type: "module" });
+    workerRef.current = w;
+    setModelStatus("loading");
+
+    w.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === "model-progress" && m.status === "progress") {
+        setModelProgress(Math.round(m.progress ?? 0));
+      } else if (m.type === "model-ready") {
+        setModelStatus("ready");
+      } else if (m.type === "depth-result") {
+        onDepthResult(m.id, m.depthData, m.depthWidth, m.depthHeight);
+      } else if (m.type === "error") {
+        setJobs((p) =>
+          p.map((j) =>
+            j.clientId === m.id
+              ? { ...j, stage: "error", error: m.error }
+              : j
+          )
+        );
+        processingRef.current = false;
+      }
+    };
+
+    return () => w.terminate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Queue: pick next queued job whenever state changes ──
+  useEffect(() => {
+    if (processingRef.current) return;
+    const next = jobs.find((j) => j.stage === "queued");
+    if (next) runJob(next.clientId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs]);
+
+  // ── Draw anaglyph on canvas when selection / job state changes ──
+  const drawAnaglyph = useCallback(
+    (job: ImageJob, forceIntensity?: number) => {
+      const cv = canvasRef.current;
+      if (!cv || !job.originalImageData || !job.depthData) return;
+      cv.width = job.width;
+      cv.height = job.height;
+      const out = generateAnaglyph(
+        job.originalImageData,
+        job.depthData.data,
+        job.depthData.width,
+        job.depthData.height,
+        forceIntensity ?? job.intensity
       );
+      cv.getContext("2d")!.putImageData(out, 0, 0);
     },
     []
   );
 
-  const processQueue = useCallback(async () => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-
-    // Process jobs one at a time
-    while (true) {
-      // Find next queued job from current state
-      let nextJob: ImageJob | undefined;
-      await new Promise<void>((resolve) => {
-        setJobs((prev) => {
-          nextJob = prev.find((j) => j.stage === "queued");
-          return prev;
-        });
-        // Small delay to let state settle
-        setTimeout(resolve, 50);
-      });
-
-      if (!nextJob) break;
-      const job = nextJob;
-
-      try {
-        // Step 1: Load image to canvas
-        updateJob(job.clientId, {
-          stage: "uploading",
-          progress: "Loading image...",
-        });
-
-        const url = URL.createObjectURL(job.file);
-        const img = new Image();
-        img.src = url;
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = reject;
-        });
-
-        const maxDim = 1024;
-        let w = img.width;
-        let h = img.height;
-        if (w > maxDim || h > maxDim) {
-          const scale = maxDim / Math.max(w, h);
-          w = Math.round(w * scale);
-          h = Math.round(h * scale);
-        }
-
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d")!;
-        ctx.drawImage(img, 0, 0, w, h);
-        const originalImageData = ctx.getImageData(0, 0, w, h);
-        const originalDataUrl = canvas.toDataURL("image/jpeg", 0.9);
-        URL.revokeObjectURL(url);
-
-        updateJob(job.clientId, {
-          originalDataUrl,
-          originalImageData,
-          width: w,
-          height: h,
-          progress: "Uploading to server...",
-        });
-
-        // Step 2: Upload to server
-        let serverId: string | undefined;
-        try {
-          const formData = new FormData();
-          formData.append("file", job.file);
-          formData.append("width", w.toString());
-          formData.append("height", h.toString());
-          const res = await fetch("/api/images", {
-            method: "POST",
-            body: formData,
-          });
-          if (res.ok) {
-            const data = await res.json();
-            serverId = data.id;
-            updateJob(job.clientId, { serverId });
-          }
-        } catch {
-          // Non-critical
-        }
-
-        // Step 3: Run depth estimation
-        updateJob(job.clientId, {
-          stage: "depth",
-          progress: cachedEstimator
-            ? "Running depth estimation..."
-            : "Loading AI depth model (~25MB first time)...",
-        });
-
-        if (!cachedEstimator) {
-          const { pipeline, env } = await import("@xenova/transformers");
-          env.allowLocalModels = false;
-          cachedEstimator = await pipeline(
-            "depth-estimation",
-            "Xenova/depth-anything-small-hf"
-          );
-        }
-
-        updateJob(job.clientId, { progress: "Running depth estimation..." });
-
-        const rawResult = await cachedEstimator(originalDataUrl);
-        const result = Array.isArray(rawResult) ? rawResult[0] : rawResult;
-
-        const depthTensor = result.predicted_depth;
-        const depthData = Array.from(
-          depthTensor.data as Float32Array
-        ) as number[];
-        const depthWidth = depthTensor.dims[1] as number;
-        const depthHeight = depthTensor.dims[0] as number;
-
-        const dr: DepthResult = { depthData, depthWidth, depthHeight };
-        const depthDataUrl = renderDepthMap(dr);
-        const anaglyphDataUrl = renderAnaglyph(
-          originalImageData,
-          dr,
-          job.intensity
-        );
-
-        updateJob(job.clientId, {
-          stage: "done",
-          progress: "",
-          depthResult: dr,
-          depthDataUrl,
-          anaglyphDataUrl,
-        });
-
-        // Step 4: Auto-save results
-        if (serverId) {
-          try {
-            await saveResults(
-              serverId,
-              anaglyphDataUrl,
-              depthDataUrl,
-              job.intensity
-            );
-          } catch {
-            // Non-critical
-          }
-        }
-      } catch (err) {
-        console.error("Processing failed:", err);
-        updateJob(job.clientId, {
-          stage: "error",
-          error: err instanceof Error ? err.message : "Unknown error",
-          progress: "",
-        });
-      }
-    }
-
-    processingRef.current = false;
-  }, [updateJob]);
-
-  // Trigger queue processing when new jobs are added
   useEffect(() => {
-    const hasQueued = jobs.some((j) => j.stage === "queued");
-    if (hasQueued && !processingRef.current) {
-      processQueue();
-    }
-  }, [jobs, processQueue]);
+    if (!selectedId) return;
+    const j = jobs.find((x) => x.clientId === selectedId);
+    if (j?.stage === "done") drawAnaglyph(j);
+  }, [selectedId, jobs, drawAnaglyph]);
 
-  const handleFiles = (files: FileList | File[]) => {
+  // ── Process a single job ──
+  async function runJob(clientId: string) {
+    processingRef.current = true;
+    setJobs((p) =>
+      p.map((j) =>
+        j.clientId === clientId ? { ...j, stage: "processing" } : j
+      )
+    );
+
+    try {
+      const job = jobsRef.current.find((j) => j.clientId === clientId)!;
+
+      // Fast image load via createImageBitmap
+      const fileBlob = await fetch(job.originalUrl).then((r) => r.blob());
+      const bmp = await createImageBitmap(fileBlob);
+
+      const maxDim = 1024;
+      let w = bmp.width,
+        h = bmp.height;
+      if (w > maxDim || h > maxDim) {
+        const s = maxDim / Math.max(w, h);
+        w = Math.round(w * s);
+        h = Math.round(h * s);
+      }
+
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d")!;
+      ctx.drawImage(bmp, 0, 0, w, h);
+      bmp.close();
+      const imageData = ctx.getImageData(0, 0, w, h);
+
+      // JPEG blob for worker (fast — no data URL base64)
+      const jpegBlob: Blob = await new Promise((r) =>
+        c.toBlob((b) => r(b!), "image/jpeg", 0.85)
+      );
+      const buffer = await jpegBlob.arrayBuffer();
+
+      // Stash processing data for finishJob
+      pendingRef.current.set(clientId, { imageData, w, h, jpegBlob });
+
+      setJobs((p) =>
+        p.map((j) =>
+          j.clientId === clientId
+            ? { ...j, originalImageData: imageData, width: w, height: h }
+            : j
+        )
+      );
+
+      // Upload original to server (fire & forget)
+      uploadOriginal(clientId, job.fileName, w, h, jpegBlob);
+
+      // Send to depth worker (transferring buffer — zero copy)
+      workerRef.current!.postMessage(
+        { type: "estimate", id: clientId, imageBuffer: buffer },
+        [buffer]
+      );
+    } catch (err) {
+      setJobs((p) =>
+        p.map((j) =>
+          j.clientId === clientId
+            ? { ...j, stage: "error", error: (err as Error).message }
+            : j
+        )
+      );
+      processingRef.current = false;
+    }
+  }
+
+  // ── Worker returned depth data ──
+  async function onDepthResult(
+    id: string,
+    depthBuf: ArrayBuffer,
+    dw: number,
+    dh: number
+  ) {
+    const dd: DepthData = { data: new Float32Array(depthBuf), width: dw, height: dh };
+    const depthUrl = await renderDepthBlob(dd);
+
+    setJobs((p) =>
+      p.map((j) =>
+        j.clientId === id
+          ? { ...j, stage: "done", depthData: dd, depthUrl }
+          : j
+      )
+    );
+    processingRef.current = false;
+
+    // Auto-save (background)
+    const pending = pendingRef.current.get(id);
+    const job = jobsRef.current.find((j) => j.clientId === id);
+    if (job?.serverId && pending) {
+      autoSave(job.serverId, pending.imageData, dd, job.intensity, depthUrl);
+    }
+    pendingRef.current.delete(id);
+  }
+
+  // ── Server upload (non-blocking) ──
+  async function uploadOriginal(
+    clientId: string,
+    fileName: string,
+    w: number,
+    h: number,
+    blob: Blob
+  ) {
+    try {
+      const fd = new FormData();
+      fd.append("file", blob, fileName);
+      fd.append("width", w.toString());
+      fd.append("height", h.toString());
+      const res = await fetch("/api/images", { method: "POST", body: fd });
+      if (res.ok) {
+        const data = await res.json();
+        setJobs((p) =>
+          p.map((j) =>
+            j.clientId === clientId ? { ...j, serverId: data.id } : j
+          )
+        );
+      }
+    } catch {
+      /* non-critical */
+    }
+  }
+
+  async function autoSave(
+    serverId: string,
+    imageData: ImageData,
+    depth: DepthData,
+    intensity: number,
+    depthUrl: string
+  ) {
+    try {
+      // Generate anaglyph blob
+      const anaResult = generateAnaglyph(
+        imageData,
+        depth.data,
+        depth.width,
+        depth.height,
+        intensity
+      );
+      const c = document.createElement("canvas");
+      c.width = imageData.width;
+      c.height = imageData.height;
+      c.getContext("2d")!.putImageData(anaResult, 0, 0);
+      const anaBlob: Blob = await new Promise((r) =>
+        c.toBlob((b) => r(b!), "image/png")
+      );
+
+      const depthBlob = await fetch(depthUrl).then((r) => r.blob());
+
+      const fd = new FormData();
+      fd.append("anaglyph", anaBlob, "anaglyph.png");
+      fd.append("depthMap", depthBlob, "depth.png");
+      fd.append("intensity", intensity.toString());
+      await fetch(`/api/images/${serverId}/save-results`, {
+        method: "POST",
+        body: fd,
+      });
+    } catch {
+      /* non-critical */
+    }
+  }
+
+  // ── Handlers ──
+  function handleFiles(files: FileList | File[]) {
     const newJobs: ImageJob[] = [];
-    for (const file of Array.from(files)) {
-      if (!file.type.startsWith("image/")) continue;
+    for (const f of Array.from(files)) {
+      if (!f.type.startsWith("image/")) continue;
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       newJobs.push({
-        clientId: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        file,
+        clientId: id,
+        fileName: f.name,
         stage: "queued",
-        progress: "Waiting...",
+        originalUrl: URL.createObjectURL(f), // instant — no encoding
         intensity: globalIntensity,
         width: 0,
         height: 0,
       });
     }
-    if (newJobs.length === 0) return;
+    if (!newJobs.length) return;
+    setJobs((p) => [...p, ...newJobs]);
+    if (!selectedId) setSelectedId(newJobs[0].clientId);
+  }
 
-    setJobs((prev) => [...prev, ...newJobs]);
-    if (!selectedJob) setSelectedJob(newJobs[0].clientId);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    handleFiles(e.dataTransfer.files);
-  };
-
-  const handleIntensityChange = (clientId: string, newIntensity: number) => {
-    setJobs((prev) =>
-      prev.map((j) => {
-        if (j.clientId !== clientId || !j.depthResult || !j.originalImageData)
-          return j;
-        const anaglyphDataUrl = renderAnaglyph(
-          j.originalImageData,
-          j.depthResult,
-          newIntensity
-        );
-        return { ...j, intensity: newIntensity, anaglyphDataUrl };
-      })
+  function handleIntensityChange(clientId: string, val: number) {
+    setJobs((p) =>
+      p.map((j) => (j.clientId === clientId ? { ...j, intensity: val } : j))
     );
-  };
+    // Debounce canvas redraw to next frame
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      const j = jobsRef.current.find((x) => x.clientId === clientId);
+      if (j?.stage === "done") drawAnaglyph(j, val);
+    });
+  }
 
-  const handleDownload = (job: ImageJob) => {
-    if (!job.anaglyphDataUrl) return;
-    const link = document.createElement("a");
-    link.download = `3d-${job.file.name.replace(/\.[^.]+$/, "")}.png`;
-    link.href = job.anaglyphDataUrl;
-    link.click();
-  };
+  function handleDownload(job: ImageJob) {
+    const cv = canvasRef.current;
+    if (!cv || !job.originalImageData || !job.depthData) return;
+    // Make sure canvas has this job's anaglyph
+    drawAnaglyph(job);
+    cv.toBlob((blob) => {
+      if (!blob) return;
+      const a = document.createElement("a");
+      a.download = `3d-${job.fileName.replace(/\.[^.]+$/, "")}.png`;
+      a.href = URL.createObjectURL(blob);
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, "image/png");
+  }
 
-  const handleDownloadAll = () => {
-    const doneJobs = jobs.filter((j) => j.stage === "done");
-    for (const job of doneJobs) {
-      handleDownload(job);
+  function handleDownloadAll() {
+    jobs
+      .filter((j) => j.stage === "done")
+      .forEach((j, i) => setTimeout(() => handleDownload(j), i * 200));
+  }
+
+  function removeJob(id: string) {
+    const job = jobs.find((j) => j.clientId === id);
+    if (job) URL.revokeObjectURL(job.originalUrl);
+    if (job?.depthUrl) URL.revokeObjectURL(job.depthUrl);
+    setJobs((p) => p.filter((j) => j.clientId !== id));
+    if (selectedId === id) {
+      const remaining = jobs.filter((j) => j.clientId !== id);
+      setSelectedId(remaining[0]?.clientId ?? null);
     }
-  };
+  }
 
-  const removeJob = (clientId: string) => {
-    setJobs((prev) => prev.filter((j) => j.clientId !== clientId));
-    if (selectedJob === clientId) {
-      setSelectedJob(
-        jobs.find((j) => j.clientId !== clientId)?.clientId || null
-      );
-    }
-  };
-
-  const active = jobs.find((j) => j.clientId === selectedJob) || null;
+  // ── Derived state ──
+  const active = jobs.find((j) => j.clientId === selectedId);
   const doneCount = jobs.filter((j) => j.stage === "done").length;
-  const processingJob = jobs.find(
-    (j) => j.stage === "uploading" || j.stage === "depth"
+  const processing = jobs.find(
+    (j) => j.stage === "processing" || j.stage === "queued"
   );
   const queuedCount = jobs.filter((j) => j.stage === "queued").length;
 
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-8">
-      <header className="text-center mb-8">
-        <h1 className="text-4xl font-bold mb-2">3D Image Generator</h1>
-        <p className="text-gray-400">
-          Upload photos &rarr; AI estimates depth &rarr; anaglyph 3D images
-        </p>
-        <p className="text-sm text-gray-500 mt-1">
-          Wear red/cyan 3D glasses to see the effect! Results auto-save online.
+      {/* Header */}
+      <header className="text-center mb-6">
+        <h1 className="text-4xl font-bold mb-1">3D Image Generator</h1>
+        <p className="text-gray-400 text-sm">
+          Upload photos &rarr; AI depth estimation &rarr; anaglyph 3D
+          &nbsp;|&nbsp; Wear red/cyan glasses!
         </p>
       </header>
 
-      {/* Upload Area - always visible */}
+      {/* Model loading bar */}
+      {modelStatus === "loading" && (
+        <div className="mb-4 bg-gray-900 rounded-lg p-3">
+          <div className="flex items-center gap-3 mb-1">
+            <div className="w-4 h-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-gray-300">
+              Loading AI model... {modelProgress}%
+            </span>
+          </div>
+          <div className="h-1 bg-gray-800 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-cyan-500 rounded-full transition-all duration-300"
+              style={{ width: `${modelProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {modelStatus === "ready" && jobs.length === 0 && (
+        <div className="mb-4 text-center text-sm text-green-500">
+          AI model loaded &mdash; ready to process
+        </div>
+      )}
+
+      {/* Upload area */}
       <div
-        onDrop={handleDrop}
+        onDrop={(e) => {
+          e.preventDefault();
+          handleFiles(e.dataTransfer.files);
+        }}
         onDragOver={(e) => e.preventDefault()}
         onClick={() => fileInputRef.current?.click()}
-        className={`border-2 border-dashed rounded-xl text-center cursor-pointer
-                   hover:border-cyan-500 hover:bg-gray-900/50 transition-all mb-6
-                   ${jobs.length === 0 ? "p-16 border-gray-600" : "p-6 border-gray-700"}`}
+        className={`border-2 border-dashed rounded-xl text-center cursor-pointer select-none
+                   hover:border-cyan-500 hover:bg-gray-900/50 transition-all mb-5
+                   ${jobs.length === 0 ? "p-14 border-gray-600" : "p-4 border-gray-700"}`}
       >
         {jobs.length === 0 ? (
           <>
-            <div className="text-6xl mb-4">📸</div>
-            <p className="text-xl text-gray-300 mb-2">
+            <div className="text-5xl mb-3 opacity-80">📸</div>
+            <p className="text-lg text-gray-300 mb-1">
               Drop images here or click to upload
             </p>
-            <p className="text-sm text-gray-500">
-              Upload multiple photos at once — JPG, PNG, WebP
+            <p className="text-xs text-gray-500">
+              Multiple images at once &mdash; JPG, PNG, WebP
             </p>
           </>
         ) : (
-          <p className="text-gray-400">
+          <p className="text-sm text-gray-400">
             + Drop more images or click to add
           </p>
         )}
@@ -395,72 +450,68 @@ export default function ImageProcessor() {
         />
       </div>
 
-      {/* Processing Status */}
-      {(processingJob || queuedCount > 0) && (
-        <div className="flex items-center gap-3 mb-6 bg-gray-900 rounded-lg p-4">
-          <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-gray-300">
-            {processingJob?.progress || "Processing..."}
+      {/* Processing banner */}
+      {processing && (
+        <div className="flex items-center gap-3 mb-5 bg-gray-900/80 rounded-lg px-4 py-3">
+          <div className="w-4 h-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+          <span className="text-sm text-gray-300 truncate">
+            Processing {processing.fileName}...
           </span>
           {queuedCount > 0 && (
-            <span className="text-gray-500 ml-auto">
-              {queuedCount} in queue
+            <span className="ml-auto text-xs text-gray-500 flex-shrink-0">
+              +{queuedCount} queued
             </span>
           )}
         </div>
       )}
 
-      {/* Results */}
+      {/* Main content */}
       {jobs.length > 0 && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Thumbnail sidebar */}
-          <div className="lg:w-48 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[80vh]">
+        <div className="flex flex-col lg:flex-row gap-5">
+          {/* Thumbnails */}
+          <div className="lg:w-44 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[80vh] pb-2 lg:pb-0">
             {jobs.map((job) => (
               <button
                 key={job.clientId}
-                onClick={() => setSelectedJob(job.clientId)}
-                className={`relative flex-shrink-0 w-20 h-20 lg:w-full lg:h-auto lg:aspect-square
-                           rounded-lg overflow-hidden border-2 transition-all
-                           ${selectedJob === job.clientId ? "border-cyan-500" : "border-gray-700 hover:border-gray-500"}`}
+                onClick={() => setSelectedId(job.clientId)}
+                className={`relative flex-shrink-0 w-16 h-16 lg:w-full lg:h-auto lg:aspect-square
+                           rounded-lg overflow-hidden border-2 transition-all duration-150
+                           ${
+                             selectedId === job.clientId
+                               ? "border-cyan-500 ring-1 ring-cyan-500/30"
+                               : "border-gray-700 hover:border-gray-500"
+                           }`}
               >
-                {job.originalDataUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={job.originalDataUrl}
-                    alt=""
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                    <div className="w-4 h-4 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-                  </div>
-                )}
-                {/* Status badge */}
-                <div className="absolute bottom-1 right-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={job.originalUrl}
+                  alt=""
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+                <div className="absolute bottom-0.5 right-0.5">
                   {job.stage === "done" && (
-                    <span className="w-3 h-3 block bg-green-500 rounded-full" />
+                    <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />
                   )}
                   {job.stage === "error" && (
-                    <span className="w-3 h-3 block bg-red-500 rounded-full" />
+                    <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />
                   )}
-                  {(job.stage === "uploading" ||
-                    job.stage === "depth" ||
-                    job.stage === "queued") && (
-                    <span className="w-3 h-3 block bg-yellow-500 rounded-full animate-pulse" />
+                  {(job.stage === "processing" || job.stage === "queued") && (
+                    <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />
                   )}
                 </div>
               </button>
             ))}
           </div>
 
-          {/* Main viewer */}
+          {/* Viewer */}
           <div className="flex-1 min-w-0">
-            {active && active.stage === "done" && (
+            {active?.stage === "done" && (
               <div className="space-y-4">
                 {/* Controls */}
-                <div className="flex flex-wrap items-center justify-between gap-4 bg-gray-900 rounded-xl p-4">
-                  <div className="flex items-center gap-4 flex-1 min-w-[200px]">
-                    <label className="text-sm text-gray-400 whitespace-nowrap">
+                <div className="flex flex-wrap items-center gap-4 bg-gray-900 rounded-xl p-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-[180px]">
+                    <label className="text-xs text-gray-400 whitespace-nowrap">
                       3D Intensity
                     </label>
                     <input
@@ -474,88 +525,87 @@ export default function ImageProcessor() {
                           parseInt(e.target.value)
                         )
                       }
-                      className="flex-1 accent-cyan-500"
+                      className="flex-1 accent-cyan-500 h-1.5"
                     />
-                    <span className="text-sm text-cyan-400 w-8">
+                    <span className="text-xs text-cyan-400 w-6 text-right tabular-nums">
                       {active.intensity}
                     </span>
                   </div>
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleDownload(active)}
-                      className="px-3 py-2 bg-cyan-600 hover:bg-cyan-700 rounded-lg text-sm font-medium transition"
+                      className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
                     >
                       Download
                     </button>
                     {doneCount > 1 && (
                       <button
                         onClick={handleDownloadAll}
-                        className="px-3 py-2 bg-cyan-800 hover:bg-cyan-700 rounded-lg text-sm font-medium transition"
+                        className="px-3 py-1.5 bg-cyan-800 hover:bg-cyan-700 rounded-lg text-xs font-medium transition-colors"
                       >
-                        Download All ({doneCount})
+                        All ({doneCount})
                       </button>
                     )}
                     <button
                       onClick={() => removeJob(active.clientId)}
-                      className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition"
+                      className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
                     >
                       Remove
                     </button>
                   </div>
                 </div>
 
-                {/* Image Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {/* Images */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <h3 className="text-sm font-medium text-gray-400 mb-2">
+                    <h3 className="text-xs font-medium text-gray-500 mb-1">
                       Original
                     </h3>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={active.originalDataUrl}
+                      src={active.originalUrl}
                       alt="Original"
                       className="w-full rounded-lg border border-gray-800"
                     />
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-400 mb-2">
+                    <h3 className="text-xs font-medium text-gray-500 mb-1">
                       Depth Map
                     </h3>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={active.depthDataUrl}
-                      alt="Depth Map"
+                      src={active.depthUrl}
+                      alt="Depth"
                       className="w-full rounded-lg border border-gray-800"
                     />
                   </div>
                   <div>
-                    <h3 className="text-sm font-medium text-gray-400 mb-2">
+                    <h3 className="text-xs font-medium text-gray-500 mb-1">
                       Anaglyph 3D
                     </h3>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={active.anaglyphDataUrl}
-                      alt="Anaglyph 3D"
+                    <canvas
+                      ref={canvasRef}
                       className="w-full rounded-lg border border-gray-800"
+                      style={{ imageRendering: "auto" }}
                     />
                   </div>
                 </div>
 
                 {active.serverId && (
-                  <p className="text-xs text-green-600 text-center">
-                    Saved online automatically
+                  <p className="text-[10px] text-green-600/70 text-center">
+                    Saved online
                   </p>
                 )}
               </div>
             )}
 
-            {active && active.stage === "error" && (
-              <div className="bg-red-900/30 border border-red-800 rounded-xl p-8 text-center">
-                <p className="text-red-400 mb-2">Processing failed</p>
-                <p className="text-sm text-red-500">{active.error}</p>
+            {active?.stage === "error" && (
+              <div className="bg-red-950/40 border border-red-900 rounded-xl p-8 text-center">
+                <p className="text-red-400 text-sm mb-1">Processing failed</p>
+                <p className="text-xs text-red-500/70">{active.error}</p>
                 <button
                   onClick={() => removeJob(active.clientId)}
-                  className="mt-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm transition"
+                  className="mt-3 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
                 >
                   Remove
                 </button>
@@ -563,47 +613,49 @@ export default function ImageProcessor() {
             )}
 
             {active &&
-              (active.stage === "queued" ||
-                active.stage === "uploading" ||
-                active.stage === "depth") && (
-                <div className="text-center py-16">
-                  <div className="inline-block w-12 h-12 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin mb-4" />
-                  <p className="text-lg text-gray-300">{active.progress}</p>
-                  {active.originalDataUrl && (
-                    <div className="mt-6 max-w-sm mx-auto">
+              (active.stage === "queued" || active.stage === "processing") && (
+                <div className="text-center py-12">
+                  <div className="inline-block w-10 h-10 border-3 border-cyan-500 border-t-transparent rounded-full animate-spin mb-3" />
+                  <p className="text-sm text-gray-400">
+                    {active.stage === "queued"
+                      ? "Waiting in queue..."
+                      : "Estimating depth..."}
+                  </p>
+                  {active.originalUrl && (
+                    <div className="mt-4 max-w-xs mx-auto opacity-40">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={active.originalDataUrl}
+                        src={active.originalUrl}
                         alt=""
-                        className="w-full rounded-lg border border-gray-800 opacity-50"
+                        className="w-full rounded-lg"
                       />
                     </div>
                   )}
                 </div>
               )}
 
-            {!active && jobs.length > 0 && (
-              <div className="text-center py-16 text-gray-500">
-                Select an image from the sidebar
+            {!active && (
+              <div className="text-center py-12 text-gray-600 text-sm">
+                Select an image
               </div>
             )}
           </div>
         </div>
       )}
 
-      {/* Global intensity for new uploads */}
+      {/* Default intensity for new uploads */}
       {jobs.length > 0 && (
-        <div className="mt-6 flex items-center gap-3 text-sm text-gray-500">
-          <span>Default intensity for new uploads:</span>
+        <div className="mt-4 flex items-center gap-2 text-xs text-gray-600">
+          <span>Default intensity:</span>
           <input
             type="range"
             min="1"
             max="40"
             value={globalIntensity}
             onChange={(e) => setGlobalIntensity(parseInt(e.target.value))}
-            className="w-32 accent-gray-500"
+            className="w-24 accent-gray-600 h-1"
           />
-          <span>{globalIntensity}</span>
+          <span className="tabular-nums">{globalIntensity}</span>
         </div>
       )}
     </div>
