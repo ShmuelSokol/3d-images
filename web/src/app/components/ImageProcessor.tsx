@@ -100,6 +100,22 @@ export default function ImageProcessor() {
     }
   }
 
+  // ── Cancel ──
+  async function handleCancel(id: string) {
+    try {
+      await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel" }),
+      });
+      setJobs((prev) =>
+        prev.map((j) => (j.id === id ? { ...j, status: "cancelled" } : j))
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+
   // ── Download (cross-origin safe) ──
   async function handleDownload(url: string, filename: string) {
     try {
@@ -139,7 +155,7 @@ export default function ImageProcessor() {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mb-4">
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span>3D Intensity:</span>
+          <span>3D Intensity (for new uploads):</span>
           <input
             type="range"
             min="1"
@@ -283,6 +299,9 @@ export default function ImageProcessor() {
                     )}
                     {job.status === "processing" && pct === null && (
                       <span className="block w-2.5 h-2.5 bg-cyan-400 rounded-full animate-pulse shadow" />
+                    )}
+                    {job.status === "cancelled" && (
+                      <span className="block w-2.5 h-2.5 bg-gray-500 rounded-full shadow" />
                     )}
                   </div>
                 </button>
@@ -438,12 +457,34 @@ export default function ImageProcessor() {
                         </p>
                       </div>
                     )}
+                  <button
+                    onClick={() => handleCancel(selected.id)}
+                    className="px-4 py-2 bg-red-700 hover:bg-red-600 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
                   <p className="text-xs text-gray-600">
                     You can close this page &mdash; processing continues on the
                     server
                   </p>
                 </div>
               )}
+
+            {/* Cancelled */}
+            {selected && selected.status === "cancelled" && (
+              <div className="bg-gray-900 border border-gray-700 rounded-xl p-8 text-center">
+                <h2 className="text-sm font-medium mb-2">
+                  {selected.fileName}
+                </h2>
+                <p className="text-gray-400 text-sm mb-3">Cancelled</p>
+                <button
+                  onClick={() => handleDelete(selected.id)}
+                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
 
             {/* Error */}
             {selected && selected.status === "error" && (

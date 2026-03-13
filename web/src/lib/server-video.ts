@@ -74,10 +74,19 @@ export async function processVideoJob(
     console.log(`[video] Processing ${frameFiles.length} frames`);
 
     for (let i = 0; i < frameFiles.length; i++) {
+      // Check if job was cancelled
+      if (i % 3 === 0) {
+        const check = await prisma.image.findUnique({ where: { id: jobId }, select: { status: true } });
+        if (check?.status === "cancelled") {
+          console.log(`[video] Job cancelled: ${jobId}`);
+          throw new Error("Job cancelled by user");
+        }
+      }
+
       const framePath = join(framesDir, frameFiles[i]);
       const frameBuffer = Buffer.from(readFileSync(framePath));
 
-      // Depth estimation (pass buffer directly, converted to data URL internally)
+      // Depth estimation
       const depth = await estimateDepth(frameBuffer, model);
 
       // Decode frame to raw RGBA

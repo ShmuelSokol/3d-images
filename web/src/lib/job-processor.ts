@@ -136,13 +136,18 @@ export async function processJob(jobId: string): Promise<void> {
       await processImageJob(jobId, job.originalUrl, job.intensity, "hd");
     }
   } catch (err) {
-    console.error(`[job] Failed: ${jobId}`, err);
-    await prisma.image.update({
-      where: { id: jobId },
-      data: {
-        status: "error",
-        error: (err as Error).message || "Processing failed",
-      },
-    });
+    const msg = (err as Error).message || "Processing failed";
+    if (msg === "Job cancelled by user") {
+      console.log(`[job] Cancelled: ${jobId}`);
+    } else {
+      console.error(`[job] Failed: ${jobId}`, err);
+      await prisma.image.update({
+        where: { id: jobId },
+        data: {
+          status: "error",
+          error: msg,
+        },
+      });
+    }
   }
 }

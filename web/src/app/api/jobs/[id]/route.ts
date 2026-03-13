@@ -19,6 +19,28 @@ export async function GET(
   }
 }
 
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const body = await req.json();
+
+    if (body.action === "cancel") {
+      await prisma.image.update({
+        where: { id: params.id },
+        data: { status: "cancelled" },
+      });
+      return NextResponse.json({ ok: true });
+    }
+
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
+  } catch (err) {
+    console.error("Patch job error:", err);
+    return NextResponse.json({ error: "Patch failed" }, { status: 500 });
+  }
+}
+
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } }

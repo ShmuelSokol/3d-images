@@ -22,6 +22,10 @@ class JobQueue {
 
         if (!pending) break;
 
+        // Re-check status (may have been cancelled while pending)
+        const fresh = await prisma.image.findUnique({ where: { id: pending.id }, select: { status: true } });
+        if (fresh?.status !== "pending") continue;
+
         // Mark as processing
         await prisma.image.update({
           where: { id: pending.id },
