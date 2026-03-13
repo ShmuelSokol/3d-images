@@ -270,12 +270,17 @@ export default function ImageProcessor() {
                     </div>
                   )}
 
-                  {/* Video badge */}
-                  {isVideo && (
-                    <div className="absolute top-0.5 left-0.5 bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">
-                      VID
+                  {/* Top badges */}
+                  <div className="absolute top-0.5 left-0.5 flex gap-0.5">
+                    {isVideo && (
+                      <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">
+                        VID
+                      </div>
+                    )}
+                    <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-cyan-300">
+                      {job.intensity}
                     </div>
-                  )}
+                  </div>
 
                   {/* Progress overlay */}
                   {pct !== null && (
@@ -319,6 +324,7 @@ export default function ImageProcessor() {
                   <div className="flex flex-wrap items-center gap-3 bg-gray-900 rounded-xl p-3">
                     <h2 className="text-sm font-medium truncate flex-1">
                       {selected.fileName}
+                      <span className="ml-2 text-xs text-gray-500">intensity: {selected.intensity}</span>
                     </h2>
                     <div className="flex gap-2">
                       {selected.anaglyphUrl && (
@@ -392,7 +398,10 @@ export default function ImageProcessor() {
               selected.mediaType === "video" &&
               selected.status === "done" && (
                 <div className="text-center py-8 space-y-4">
-                  <h2 className="text-sm font-medium">{selected.fileName}</h2>
+                  <h2 className="text-sm font-medium">
+                    {selected.fileName}
+                    <span className="ml-2 text-xs text-gray-500">intensity: {selected.intensity}</span>
+                  </h2>
                   {selected.videoUrl && (
                     <video
                       src={selected.videoUrl}
