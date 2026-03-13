@@ -48,7 +48,7 @@ async function ensureModel(model: string) {
  */
 export async function estimateDepth(
   imageBuffer: Buffer,
-  model: string = "onnx-community/depth-anything-v2-base"
+  model: string = "onnx-community/depth-anything-v2-large"
 ): Promise<DepthResult> {
   await ensureModel(model);
 
