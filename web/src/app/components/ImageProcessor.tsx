@@ -227,6 +227,21 @@ export default function ImageProcessor() {
     setSelectedIds(new Set());
   }
 
+  // ── Retry ──
+  async function handleRetry(id: string) {
+    try {
+      const res = await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "retry" }),
+      });
+      if (res.ok) {
+        const job = await res.json();
+        setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
+      }
+    } catch { /* ignore */ }
+  }
+
   // ── Rotate ──
   async function handleRotate(id: string, angle: number) {
     try {
@@ -800,12 +815,20 @@ export default function ImageProcessor() {
                 </h2>
                 <p className="text-red-400 text-sm mb-1">Processing failed</p>
                 <p className="text-xs text-red-500/70">{selected.error}</p>
-                <button
-                  onClick={() => handleDelete(selected.id)}
-                  className="mt-3 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
-                >
-                  Remove
-                </button>
+                <div className="mt-3 flex justify-center gap-2">
+                  <button
+                    onClick={() => handleRetry(selected.id)}
+                    className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => handleDelete(selected.id)}
+                    className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             )}
 

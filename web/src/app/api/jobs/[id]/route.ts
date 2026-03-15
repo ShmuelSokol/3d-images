@@ -38,6 +38,15 @@ export async function PATCH(
       return NextResponse.json({ ok: true });
     }
 
+    if (body.action === "retry") {
+      const job = await prisma.image.update({
+        where: { id: params.id },
+        data: { status: "pending", error: null, framesDone: 0 },
+      });
+      jobQueue.kick().catch(console.error);
+      return NextResponse.json(job);
+    }
+
     if (body.action === "rotate") {
       const angle = parseInt(body.angle) || 90;
       const job = await prisma.image.findUnique({ where: { id: params.id } });
