@@ -209,8 +209,8 @@ export function generateAnaglyphServer(
       const shift = d * intensity;
       shiftMap[y * width + x] = shift;
 
-      const leftX = Math.min(Math.max(x + shift, 0), width - 1);
-      const rightX = Math.min(Math.max(x - shift, 0), width - 1);
+      const leftX = Math.min(Math.max(x - shift, 0), width - 1);
+      const rightX = Math.min(Math.max(x + shift, 0), width - 1);
 
       const outIdx = (y * width + x) * 4;
 
