@@ -569,7 +569,7 @@ export default function ImageProcessor() {
                     </div>
                     <div>
                       <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Distance Map
+                        Color Map
                       </h3>
                       {selected.distanceMapUrl ? (
                         // eslint-disable-next-line @next/next/no-img-element

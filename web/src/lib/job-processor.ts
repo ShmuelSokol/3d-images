@@ -4,7 +4,7 @@ import { getSupabase } from "./supabase";
 import { estimateDepth } from "./depth-estimator";
 import {
   generateAnaglyphServer,
-  generateDistanceMap,
+  generateColorMap,
   decodeToRaw,
   rawToPng,
   depthToPng,
@@ -71,7 +71,7 @@ async function processImageJob(
   const [anaglyphPng, depthPng, distanceMapPng] = await Promise.all([
     rawToPng(anaglyph),
     depthToPng(depth.data, depth.width, depth.height),
-    generateDistanceMap(depth.data, depth.width, depth.height),
+    generateColorMap(depth.data, depth.width, depth.height),
   ]);
 
   // Upload to Supabase
