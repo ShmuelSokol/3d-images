@@ -207,10 +207,11 @@ export default function ImageProcessor() {
     // Multiple files — download as zip
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
-    const fetches = toDownload.map(async (j) => {
+    const fetches = toDownload.map(async (j, i) => {
       const url = j.mediaType === "video" ? j.videoUrl! : j.anaglyphUrl!;
       const ext = j.mediaType === "video" ? "mp4" : "png";
-      const name = `3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`;
+      const base = j.fileName.replace(/\.[^.]+$/, "");
+      const name = `3d-${base}-${i + 1}.${ext}`;
       try {
         const res = await fetch(url);
         if (!res.ok) return;
