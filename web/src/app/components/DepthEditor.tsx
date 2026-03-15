@@ -38,11 +38,6 @@ export default function DepthEditor({
 
   // Load images
   const loadImages = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
     const depthImg = new Image();
     depthImg.crossOrigin = "anonymous";
     const bgImg = new Image();
@@ -52,19 +47,23 @@ export default function DepthEditor({
 
     function tryDraw() {
       if (!dLoaded || !bLoaded) return;
+      const c = canvasRef.current;
+      if (!c) return;
+      const cx = c.getContext("2d");
+      if (!cx) return;
       const w = depthImg.naturalWidth;
       const h = depthImg.naturalHeight;
       sizeRef.current = { w, h };
-      canvas.width = w;
-      canvas.height = h;
+      c.width = w;
+      c.height = h;
 
       // Also size the overlay canvas
       const overlay = overlayCanvasRef.current;
       if (overlay) { overlay.width = w; overlay.height = h; }
 
       bgImageRef.current = bgImg;
-      ctx.drawImage(depthImg, 0, 0);
-      const imgData = ctx.getImageData(0, 0, w, h);
+      cx.drawImage(depthImg, 0, 0);
+      const imgData = cx.getImageData(0, 0, w, h);
       depthDataRef.current = new Uint8ClampedArray(imgData.data);
       originalDepthRef.current = new Uint8ClampedArray(imgData.data);
       selectionRef.current = new Uint8Array(w * h);
