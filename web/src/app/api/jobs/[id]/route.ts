@@ -48,13 +48,23 @@ export async function PATCH(
     }
 
     if (body.action === "reprocess") {
-      const newIntensity = parseInt(body.intensity);
-      if (isNaN(newIntensity) || newIntensity < 1 || newIntensity > 40) {
-        return NextResponse.json({ error: "Invalid intensity" }, { status: 400 });
+      const updates: Record<string, unknown> = { status: "pending", error: null, framesDone: 0 };
+      if (body.intensity !== undefined) {
+        const val = parseInt(body.intensity);
+        if (isNaN(val) || val < 1 || val > 40) {
+          return NextResponse.json({ error: "Invalid intensity" }, { status: 400 });
+        }
+        updates.intensity = val;
+      }
+      if (body.colorMode !== undefined) {
+        updates.colorMode = body.colorMode === "classic" ? "classic" : "dubois";
+      }
+      if (body.fillOcclusion !== undefined) {
+        updates.fillOcclusion = !!body.fillOcclusion;
       }
       const job = await prisma.image.update({
         where: { id: params.id },
-        data: { intensity: newIntensity, status: "pending", error: null, framesDone: 0 },
+        data: updates,
       });
       jobQueue.kick().catch(console.error);
       return NextResponse.json(job);

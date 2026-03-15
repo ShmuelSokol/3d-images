@@ -47,6 +47,8 @@ export default function ImageProcessor() {
   const [editingDepth, setEditingDepth] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
   const [adjustIntensity, setAdjustIntensity] = useState<number | null>(null);
+  const [adjustColorMode, setAdjustColorMode] = useState<string | null>(null);
+  const [adjustFillOcclusion, setAdjustFillOcclusion] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -252,13 +254,13 @@ export default function ImageProcessor() {
     } catch { /* ignore */ }
   }
 
-  // ── Reprocess with new intensity ──
-  async function handleReprocess(id: string, newIntensity: number) {
+  // ── Reprocess with new settings ──
+  async function handleReprocess(id: string, settings: { intensity?: number; colorMode?: string; fillOcclusion?: boolean }) {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reprocess", intensity: newIntensity }),
+        body: JSON.stringify({ action: "reprocess", ...settings }),
       });
       if (res.ok) {
         const job = await res.json();
@@ -305,8 +307,8 @@ export default function ImageProcessor() {
     }
   }
 
-  // Reset intensity slider when switching images
-  useEffect(() => { setAdjustIntensity(null); setEditingDepth(false); }, [selectedId]);
+  // Reset adjusters when switching images
+  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); }, [selectedId]);
 
   // ── Derived ──
   const selected = jobs.find((j) => j.id === selectedId) ?? null;
@@ -654,26 +656,46 @@ export default function ImageProcessor() {
                       </button>
                     </div>
                     </div>
-                    {/* Intensity adjuster */}
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className="text-gray-500">Intensity:</span>
-                      <input
-                        type="range"
-                        min="1"
-                        max="40"
-                        value={adjustIntensity ?? selected.intensity}
-                        onChange={(e) => setAdjustIntensity(parseInt(e.target.value))}
-                        className="w-32 accent-cyan-500 h-1.5"
-                      />
-                      <span className="text-cyan-400 tabular-nums w-5 text-right">
-                        {adjustIntensity ?? selected.intensity}
-                      </span>
-                      {adjustIntensity !== null && adjustIntensity !== selected.intensity && (
+                    {/* Settings row */}
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <div className="flex items-center gap-1.5 text-gray-400">
+                        <span>Intensity:</span>
+                        <input type="range" min="1" max="40"
+                          value={adjustIntensity ?? selected.intensity}
+                          onChange={(e) => setAdjustIntensity(parseInt(e.target.value))}
+                          className="w-24 accent-cyan-500 h-1.5" />
+                        <span className="text-cyan-400 tabular-nums w-5 text-right">{adjustIntensity ?? selected.intensity}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-gray-400">
+                        <span>Color:</span>
+                        <select
+                          value={adjustColorMode ?? selected.colorMode}
+                          onChange={(e) => setAdjustColorMode(e.target.value)}
+                          className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300"
+                        >
+                          <option value="dubois">Dubois</option>
+                          <option value="classic">Classic</option>
+                        </select>
+                      </div>
+                      <label className="flex items-center gap-1 text-gray-400 cursor-pointer">
+                        <input type="checkbox"
+                          checked={adjustFillOcclusion ?? selected.fillOcclusion}
+                          onChange={(e) => setAdjustFillOcclusion(e.target.checked)}
+                          className="accent-cyan-500" />
+                        Fill gaps
+                      </label>
+                      {((adjustIntensity !== null && adjustIntensity !== selected.intensity) ||
+                        (adjustColorMode !== null && adjustColorMode !== selected.colorMode) ||
+                        (adjustFillOcclusion !== null && adjustFillOcclusion !== selected.fillOcclusion)) && (
                         <button
-                          onClick={() => handleReprocess(selected.id, adjustIntensity)}
+                          onClick={() => handleReprocess(selected.id, {
+                            ...(adjustIntensity !== null && adjustIntensity !== selected.intensity ? { intensity: adjustIntensity } : {}),
+                            ...(adjustColorMode !== null && adjustColorMode !== selected.colorMode ? { colorMode: adjustColorMode } : {}),
+                            ...(adjustFillOcclusion !== null && adjustFillOcclusion !== selected.fillOcclusion ? { fillOcclusion: adjustFillOcclusion } : {}),
+                          })}
                           className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-xs font-medium transition-colors"
                         >
-                          Apply
+                          Apply Changes
                         </button>
                       )}
                     </div>
@@ -762,11 +784,71 @@ export default function ImageProcessor() {
             {selected &&
               selected.mediaType === "video" &&
               selected.status === "done" && (
-                <div className="text-center py-8 space-y-4">
-                  <h2 className="text-sm font-medium">
-                    {selected.fileName}
-                    <span className="ml-2 text-xs text-gray-500">intensity: {selected.intensity}</span>
-                  </h2>
+                <div className="space-y-4">
+                  <div className="bg-gray-900 rounded-xl p-3 space-y-2">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h2 className="text-sm font-medium truncate flex-1">{selected.fileName}</h2>
+                      <div className="flex gap-2">
+                        {selected.videoUrl && (
+                          <button
+                            onClick={() => handleDownload(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
+                            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
+                          >
+                            Download 3D Video
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(selected.id)}
+                          className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                    {/* Settings row */}
+                    <div className="flex flex-wrap items-center gap-3 text-xs">
+                      <div className="flex items-center gap-1.5 text-gray-400">
+                        <span>Intensity:</span>
+                        <input type="range" min="1" max="40"
+                          value={adjustIntensity ?? selected.intensity}
+                          onChange={(e) => setAdjustIntensity(parseInt(e.target.value))}
+                          className="w-24 accent-cyan-500 h-1.5" />
+                        <span className="text-cyan-400 tabular-nums w-5 text-right">{adjustIntensity ?? selected.intensity}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-gray-400">
+                        <span>Color:</span>
+                        <select
+                          value={adjustColorMode ?? selected.colorMode}
+                          onChange={(e) => setAdjustColorMode(e.target.value)}
+                          className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300"
+                        >
+                          <option value="dubois">Dubois</option>
+                          <option value="classic">Classic</option>
+                        </select>
+                      </div>
+                      <label className="flex items-center gap-1 text-gray-400 cursor-pointer">
+                        <input type="checkbox"
+                          checked={adjustFillOcclusion ?? selected.fillOcclusion}
+                          onChange={(e) => setAdjustFillOcclusion(e.target.checked)}
+                          className="accent-cyan-500" />
+                        Fill gaps
+                      </label>
+                      {((adjustIntensity !== null && adjustIntensity !== selected.intensity) ||
+                        (adjustColorMode !== null && adjustColorMode !== selected.colorMode) ||
+                        (adjustFillOcclusion !== null && adjustFillOcclusion !== selected.fillOcclusion)) && (
+                        <button
+                          onClick={() => handleReprocess(selected.id, {
+                            ...(adjustIntensity !== null && adjustIntensity !== selected.intensity ? { intensity: adjustIntensity } : {}),
+                            ...(adjustColorMode !== null && adjustColorMode !== selected.colorMode ? { colorMode: adjustColorMode } : {}),
+                            ...(adjustFillOcclusion !== null && adjustFillOcclusion !== selected.fillOcclusion ? { fillOcclusion: adjustFillOcclusion } : {}),
+                          })}
+                          className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-xs font-medium transition-colors"
+                        >
+                          Apply Changes
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   {selected.videoUrl && (
                     <video
                       src={selected.videoUrl}
@@ -776,22 +858,6 @@ export default function ImageProcessor() {
                       className="max-w-2xl mx-auto rounded-lg border border-gray-800"
                     />
                   )}
-                  <div className="flex justify-center gap-3">
-                    {selected.videoUrl && (
-                      <button
-                        onClick={() => handleDownload(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
-                        className="px-5 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors"
-                      >
-                        Download 3D Video
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDelete(selected.id)}
-                      className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors"
-                    >
-                      Remove
-                    </button>
-                  </div>
                 </div>
               )}
 

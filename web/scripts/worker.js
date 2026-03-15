@@ -131,7 +131,7 @@ async function main() {
 
           // Reassemble
           console.log(`[worker] Reassembling video`);
-          execSync(`ffmpeg -y -framerate ${fps} -i "${outDir}/frame-%04d.png" -c:v libx264 -pix_fmt yuv420p -crf 23 -movflags +faststart "${outputPath}"`, { stdio: "pipe" });
+          execSync(`ffmpeg -y -framerate ${fps} -i "${outDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outputPath}"`, { stdio: "pipe" });
 
           const resultBuf = readFileSync(outputPath);
           const storagePath = `videos/${jobId}-anaglyph.mp4`;
