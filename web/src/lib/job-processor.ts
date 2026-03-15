@@ -34,17 +34,18 @@ async function processImageJob(
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const inputBuffer = Buffer.from(await res.arrayBuffer());
 
-  // Resize if needed (max 1024px)
-  const meta = await sharp(inputBuffer).metadata();
+  // Auto-rotate based on EXIF orientation, then resize if needed
+  const rotated = Buffer.from(await sharp(inputBuffer).rotate().toBuffer());
+  const meta = await sharp(rotated).metadata();
   let w = meta.width || 0;
   let h = meta.height || 0;
   const maxDim = 1024;
-  let resized: Buffer = inputBuffer;
+  let resized: Buffer = rotated;
   if (w > maxDim || h > maxDim) {
     const s = maxDim / Math.max(w, h);
     w = Math.round(w * s);
     h = Math.round(h * s);
-    resized = Buffer.from(await sharp(inputBuffer).resize(w, h).jpeg({ quality: 85 }).toBuffer());
+    resized = Buffer.from(await sharp(rotated).resize(w, h).jpeg({ quality: 85 }).toBuffer());
   }
 
   // Convert to JPEG buffer for depth estimation
