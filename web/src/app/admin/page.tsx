@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -28,6 +28,8 @@ interface Stats {
   }[];
 }
 
+const ImageProcessor = lazy(() => import("../components/ImageProcessor"));
+
 const STATUS_COLORS: Record<string, string> = {
   done: "#22c55e",
   pending: "#eab308",
@@ -44,7 +46,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
-  const [tab, setTab] = useState<"overview" | "users" | "activity">("overview");
+  const [tab, setTab] = useState<"generator" | "overview" | "users" | "activity">("generator");
 
   // Check auth
   useEffect(() => {
@@ -72,8 +74,8 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (authed) loadStats();
-  }, [authed, loadStats]);
+    if (authed && tab !== "generator") loadStats();
+  }, [authed, tab, loadStats]);
 
   async function handleLogin() {
     setError("");
@@ -163,7 +165,7 @@ export default function AdminPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-gray-900 rounded-lg p-1 w-fit">
-          {(["overview", "users", "activity"] as const).map((t) => (
+          {(["generator", "overview", "users", "activity"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -176,12 +178,22 @@ export default function AdminPage() {
           ))}
         </div>
 
-        {!stats ? (
+        {/* Generator Tab */}
+        {tab === "generator" && (
+          <Suspense fallback={<p className="text-gray-500">Loading...</p>}>
+            <ImageProcessor />
+          </Suspense>
+        )}
+
+        {/* Admin Tabs */}
+        {tab !== "generator" && !stats && (
           <div>
             <p className="text-gray-500">Loading stats...</p>
             {statsError && <p className="text-red-400 text-sm mt-2">{statsError}</p>}
           </div>
-        ) : (
+        )}
+
+        {tab !== "generator" && stats && (
           <>
             {/* Overview Tab */}
             {tab === "overview" && (
