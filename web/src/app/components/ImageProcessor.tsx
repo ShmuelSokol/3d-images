@@ -123,6 +123,24 @@ export default function ImageProcessor() {
     }
   }
 
+  // ── Rotate ──
+  async function handleRotate(id: string, angle: number) {
+    try {
+      const res = await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "rotate", angle }),
+      });
+      if (res.ok) {
+        const newJob = await res.json();
+        setJobs((prev) => [newJob, ...prev]);
+        setSelectedId(newJob.id);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
   // ── Download (cross-origin safe) ──
   async function handleDownload(url: string, filename: string) {
     try {
@@ -356,6 +374,27 @@ export default function ImageProcessor() {
                       <span className="ml-2 text-xs text-gray-500">intensity: {selected.intensity}</span>
                     </h2>
                     <div className="flex gap-2">
+                      <button
+                        onClick={() => handleRotate(selected.id, -90)}
+                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        title="Rotate left 90°"
+                      >
+                        ↺ 90°
+                      </button>
+                      <button
+                        onClick={() => handleRotate(selected.id, 90)}
+                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        title="Rotate right 90°"
+                      >
+                        ↻ 90°
+                      </button>
+                      <button
+                        onClick={() => handleRotate(selected.id, 180)}
+                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        title="Rotate 180°"
+                      >
+                        ↻ 180°
+                      </button>
                       {selected.anaglyphUrl && (
                         <button
                           onClick={() => handleDownload(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}

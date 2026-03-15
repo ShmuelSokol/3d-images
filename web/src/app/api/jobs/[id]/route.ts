@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSupabase } from "@/lib/supabase";
+import sharp from "sharp";
+import { jobQueue } from "@/lib/job-queue";
 
 export async function GET(
   _req: NextRequest,
@@ -32,6 +35,54 @@ export async function PATCH(
         data: { status: "cancelled" },
       });
       return NextResponse.json({ ok: true });
+    }
+
+    if (body.action === "rotate") {
+      const angle = parseInt(body.angle) || 90;
+      const job = await prisma.image.findUnique({ where: { id: params.id } });
+      if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+      // Download original
+      const res = await fetch(job.originalUrl);
+      if (!res.ok) return NextResponse.json({ error: "Download failed" }, { status: 500 });
+      const buf = Buffer.from(await res.arrayBuffer());
+
+      // Rotate with sharp
+      const rotated = await sharp(buf).rotate(angle).toBuffer();
+      const meta = await sharp(rotated).metadata();
+
+      // Upload rotated as new original
+      const supabase = getSupabase();
+      const ext = job.fileName.split(".").pop() || "jpg";
+      const storageName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+      const { error: uploadError } = await supabase.storage
+        .from("3d-images")
+        .upload(`originals/${storageName}`, rotated, {
+          contentType: `image/${ext === "png" ? "png" : "jpeg"}`,
+        });
+      if (uploadError) return NextResponse.json({ error: uploadError.message }, { status: 500 });
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("3d-images")
+        .getPublicUrl(`originals/${storageName}`);
+
+      // Create new job with rotated image
+      const newJob = await prisma.image.create({
+        data: {
+          originalUrl: publicUrl,
+          fileName: `${job.fileName} (rotated ${angle}°)`,
+          width: meta.width || 0,
+          height: meta.height || 0,
+          intensity: job.intensity,
+          colorMode: job.colorMode,
+          fillOcclusion: job.fillOcclusion,
+          status: "pending",
+          mediaType: "image",
+        },
+      });
+
+      jobQueue.kick().catch(console.error);
+      return NextResponse.json(newJob);
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
