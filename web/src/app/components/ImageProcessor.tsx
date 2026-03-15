@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
+
+const DepthEditor = lazy(() => import("./DepthEditor"));
 
 // ── Types ──
 
@@ -31,6 +33,7 @@ interface Job {
 export default function ImageProcessor() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [uploading, setUploading] = useState(false);
   const [intensity, setIntensity] = useState(10);
   const [colorMode, setColorMode] = useState("dubois");
@@ -41,6 +44,8 @@ export default function ImageProcessor() {
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
+  const [editingDepth, setEditingDepth] = useState(false);
+  const [selectMode, setSelectMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -172,6 +177,54 @@ export default function ImageProcessor() {
     });
     setUser(null);
     fetchJobs(); // Refresh to show session jobs only
+  }
+
+  // ── Multi-select ──
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleDownloadSelected() {
+    const toDownload = jobs.filter(
+      (j) => selectedIds.has(j.id) && j.status === "done" && (j.anaglyphUrl || j.videoUrl)
+    );
+    if (toDownload.length === 0) return;
+
+    if (toDownload.length === 1) {
+      const j = toDownload[0];
+      const url = j.mediaType === "video" ? j.videoUrl! : j.anaglyphUrl!;
+      const ext = j.mediaType === "video" ? "mp4" : "png";
+      handleDownload(url, `3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`);
+      return;
+    }
+
+    // Multiple files — download as zip
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    for (const j of toDownload) {
+      const url = j.mediaType === "video" ? j.videoUrl! : j.anaglyphUrl!;
+      const ext = j.mediaType === "video" ? "mp4" : "png";
+      try {
+        const res = await fetch(url);
+        const blob = await res.blob();
+        zip.file(`3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`, blob);
+      } catch { /* skip failed downloads */ }
+    }
+    const content = await zip.generateAsync({ type: "blob" });
+    const blobUrl = URL.createObjectURL(content);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = "3d-images.zip";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(blobUrl);
+    setSelectedIds(new Set());
   }
 
   // ── Rotate ──
@@ -386,7 +439,25 @@ export default function ImageProcessor() {
       {jobs.length > 0 && (
         <div className="flex flex-col lg:flex-row gap-5">
           {/* Sidebar */}
-          <div className="lg:w-48 flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[80vh] pb-2 lg:pb-0">
+          <div className="lg:w-48 flex-shrink-0">
+            {/* Select mode toggle + download button */}
+            <div className="flex items-center gap-2 mb-2">
+              <button
+                onClick={() => { setSelectMode(!selectMode); if (selectMode) setSelectedIds(new Set()); }}
+                className={`text-[10px] px-2 py-1 rounded transition-colors ${selectMode ? "bg-cyan-600 text-white" : "bg-gray-800 text-gray-400 hover:text-gray-300"}`}
+              >
+                {selectMode ? "Cancel" : "Select"}
+              </button>
+              {selectMode && selectedIds.size > 0 && (
+                <button
+                  onClick={handleDownloadSelected}
+                  className="text-[10px] px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white transition-colors"
+                >
+                  Download {selectedIds.size}
+                </button>
+              )}
+            </div>
+            <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[75vh] pb-2 lg:pb-0">
             {jobs.map((job) => {
               const isVideo = job.mediaType === "video";
               const pct =
@@ -400,10 +471,10 @@ export default function ImageProcessor() {
               return (
                 <button
                   key={job.id}
-                  onClick={() => setSelectedId(job.id)}
+                  onClick={() => { if (selectMode) { toggleSelect(job.id); } else { setSelectedId(job.id); } }}
                   className={`relative flex-shrink-0 w-20 h-20 lg:w-full lg:h-auto lg:aspect-square
                              rounded-lg overflow-hidden border-2 transition-all duration-150
-                             ${selectedId === job.id ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
+                             ${selectedId === job.id && !selectMode ? "border-cyan-500 ring-1 ring-cyan-500/30" : selectedIds.has(job.id) ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
                 >
                   {/* Thumbnail */}
                   {job.anaglyphUrl ? (
@@ -448,9 +519,18 @@ export default function ImageProcessor() {
                     </div>
                   )}
 
+                  {/* Select checkbox */}
+                  {selectMode && (
+                    <div className="absolute top-0.5 right-0.5">
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] ${selectedIds.has(job.id) ? "bg-cyan-500 border-cyan-500 text-white" : "border-white/70 bg-black/40"}`}>
+                        {selectedIds.has(job.id) && "✓"}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Status badge */}
                   <div className="absolute bottom-0.5 right-0.5">
-                    {job.status === "done" && (
+                    {job.status === "done" && !selectMode && (
                       <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />
                     )}
                     {job.status === "error" && (
@@ -469,6 +549,7 @@ export default function ImageProcessor() {
                 </button>
               );
             })}
+          </div>
           </div>
 
           {/* Viewer */}
@@ -505,6 +586,14 @@ export default function ImageProcessor() {
                       >
                         ↻ 180°
                       </button>
+                      {selected.depthMapUrl && (
+                        <button
+                          onClick={() => setEditingDepth(!editingDepth)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${editingDepth ? "bg-purple-600 hover:bg-purple-500" : "bg-gray-700 hover:bg-gray-600"}`}
+                        >
+                          {editingDepth ? "Close Editor" : "Edit Depth"}
+                        </button>
+                      )}
                       {selected.anaglyphUrl && (
                         <button
                           onClick={() => handleDownload(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
@@ -521,6 +610,19 @@ export default function ImageProcessor() {
                       </button>
                     </div>
                   </div>
+                  {/* Depth Editor */}
+                  {editingDepth && selected.depthMapUrl && (
+                    <Suspense fallback={<div className="text-center py-8 text-gray-500 text-sm">Loading editor...</div>}>
+                      <DepthEditor
+                        jobId={selected.id}
+                        depthMapUrl={selected.depthMapUrl}
+                        originalUrl={selected.originalUrl}
+                        onSave={() => { setEditingDepth(false); fetchJobs(); }}
+                        onClose={() => setEditingDepth(false)}
+                      />
+                    </Suspense>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
                       <h3 className="text-xs font-medium text-gray-500 mb-1">
