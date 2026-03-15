@@ -1,22 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
+import { isAdmin, createAdminToken, ADMIN_COOKIE } from "@/lib/session";
 
 const ADMIN_EMAIL = "shmuelsokol@yahoo.com";
 const ADMIN_HASH = "$2b$10$JxK5Bblt4aDkxFI4yx0ANeT4ha239LkZclaM.6vDDTNGf6eZQBl7S";
-const JWT_SECRET = process.env["JWT_SECRET"] || "3d-images-secret-key-change-in-prod";
-const ADMIN_COOKIE = "td_admin";
-
-export function isAdmin(req: NextRequest): boolean {
-  const token = req.cookies.get(ADMIN_COOKIE)?.value;
-  if (!token) return false;
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as { admin: boolean };
-    return payload.admin === true;
-  } catch {
-    return false;
-  }
-}
 
 export async function GET(req: NextRequest) {
   return NextResponse.json({ admin: isAdmin(req) });
@@ -45,7 +32,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
     }
 
-    const token = jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "7d" });
+    const token = createAdminToken();
     const res = NextResponse.json({ admin: true });
     res.cookies.set(ADMIN_COOKIE, token, {
       httpOnly: true,

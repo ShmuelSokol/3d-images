@@ -50,4 +50,27 @@ export function createAuthToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: "90d" });
 }
 
-export { SESSION_COOKIE, AUTH_COOKIE };
+const ADMIN_COOKIE = "td_admin";
+
+/**
+ * Check if the request is from an authenticated admin.
+ */
+export function isAdmin(req: NextRequest): boolean {
+  const token = req.cookies.get(ADMIN_COOKIE)?.value;
+  if (!token) return false;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as { admin: boolean };
+    return payload.admin === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Create a JWT token for admin.
+ */
+export function createAdminToken(): string {
+  return jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "7d" });
+}
+
+export { SESSION_COOKIE, AUTH_COOKIE, ADMIN_COOKIE };
