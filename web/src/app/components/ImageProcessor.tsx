@@ -46,6 +46,7 @@ export default function ImageProcessor() {
   const [authLoading, setAuthLoading] = useState(false);
   const [editingDepth, setEditingDepth] = useState(false);
   const [selectMode, setSelectMode] = useState(false);
+  const [adjustIntensity, setAdjustIntensity] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -250,6 +251,22 @@ export default function ImageProcessor() {
     } catch { /* ignore */ }
   }
 
+  // ── Reprocess with new intensity ──
+  async function handleReprocess(id: string, newIntensity: number) {
+    try {
+      const res = await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reprocess", intensity: newIntensity }),
+      });
+      if (res.ok) {
+        const job = await res.json();
+        setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
+        setAdjustIntensity(null);
+      }
+    } catch { /* ignore */ }
+  }
+
   // ── Rotate ──
   async function handleRotate(id: string, angle: number) {
     try {
@@ -286,6 +303,9 @@ export default function ImageProcessor() {
       window.open(url, "_blank");
     }
   }
+
+  // Reset intensity slider when switching images
+  useEffect(() => { setAdjustIntensity(null); setEditingDepth(false); }, [selectedId]);
 
   // ── Derived ──
   const selected = jobs.find((j) => j.id === selectedId) ?? null;
@@ -582,10 +602,10 @@ export default function ImageProcessor() {
               selected.mediaType === "image" &&
               selected.status === "done" && (
                 <div className="space-y-4">
-                  <div className="flex flex-wrap items-center gap-3 bg-gray-900 rounded-xl p-3">
+                  <div className="bg-gray-900 rounded-xl p-3 space-y-2">
+                    <div className="flex flex-wrap items-center gap-3">
                     <h2 className="text-sm font-medium truncate flex-1">
                       {selected.fileName}
-                      <span className="ml-2 text-xs text-gray-500">intensity: {selected.intensity}</span>
                     </h2>
                     <div className="flex gap-2">
                       <button
@@ -631,6 +651,30 @@ export default function ImageProcessor() {
                       >
                         Remove
                       </button>
+                    </div>
+                    </div>
+                    {/* Intensity adjuster */}
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-gray-500">Intensity:</span>
+                      <input
+                        type="range"
+                        min="1"
+                        max="40"
+                        value={adjustIntensity ?? selected.intensity}
+                        onChange={(e) => setAdjustIntensity(parseInt(e.target.value))}
+                        className="w-32 accent-cyan-500 h-1.5"
+                      />
+                      <span className="text-cyan-400 tabular-nums w-5 text-right">
+                        {adjustIntensity ?? selected.intensity}
+                      </span>
+                      {adjustIntensity !== null && adjustIntensity !== selected.intensity && (
+                        <button
+                          onClick={() => handleReprocess(selected.id, adjustIntensity)}
+                          className="px-3 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-xs font-medium transition-colors"
+                        >
+                          Apply
+                        </button>
+                      )}
                     </div>
                   </div>
                   {/* Depth Editor */}

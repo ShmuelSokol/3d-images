@@ -47,6 +47,19 @@ export async function PATCH(
       return NextResponse.json(job);
     }
 
+    if (body.action === "reprocess") {
+      const newIntensity = parseInt(body.intensity);
+      if (isNaN(newIntensity) || newIntensity < 1 || newIntensity > 40) {
+        return NextResponse.json({ error: "Invalid intensity" }, { status: 400 });
+      }
+      const job = await prisma.image.update({
+        where: { id: params.id },
+        data: { intensity: newIntensity, status: "pending", error: null, framesDone: 0 },
+      });
+      jobQueue.kick().catch(console.error);
+      return NextResponse.json(job);
+    }
+
     if (body.action === "rotate") {
       const angle = parseInt(body.angle) || 90;
       const job = await prisma.image.findUnique({ where: { id: params.id } });
