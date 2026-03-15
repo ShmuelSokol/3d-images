@@ -54,13 +54,21 @@ export default function AdminPage() {
       .catch(() => setAuthed(false));
   }, []);
 
+  const [statsError, setStatsError] = useState("");
+
   const loadStats = useCallback(async () => {
     try {
+      setStatsError("");
       const res = await fetch("/api/admin/stats");
       if (res.ok) {
         setStats(await res.json());
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setStatsError(`${res.status}: ${data.error || "Unknown error"}`);
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      setStatsError(`Network error: ${(err as Error).message}`);
+    }
   }, []);
 
   useEffect(() => {
@@ -169,7 +177,10 @@ export default function AdminPage() {
         </div>
 
         {!stats ? (
-          <p className="text-gray-500">Loading stats...</p>
+          <div>
+            <p className="text-gray-500">Loading stats...</p>
+            {statsError && <p className="text-red-400 text-sm mt-2">{statsError}</p>}
+          </div>
         ) : (
           <>
             {/* Overview Tab */}
