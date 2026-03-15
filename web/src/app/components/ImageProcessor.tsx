@@ -206,25 +206,33 @@ export default function ImageProcessor() {
     // Multiple files — download as zip
     const JSZip = (await import("jszip")).default;
     const zip = new JSZip();
-    for (const j of toDownload) {
+    const fetches = toDownload.map(async (j) => {
       const url = j.mediaType === "video" ? j.videoUrl! : j.anaglyphUrl!;
       const ext = j.mediaType === "video" ? "mp4" : "png";
+      const name = `3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`;
       try {
         const res = await fetch(url);
-        const blob = await res.blob();
-        zip.file(`3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`, blob);
+        if (!res.ok) return;
+        const buf = await res.arrayBuffer();
+        zip.file(name, buf);
       } catch { /* skip failed downloads */ }
-    }
+    });
+    await Promise.all(fetches);
+    if (Object.keys(zip.files).length === 0) return;
     const content = await zip.generateAsync({ type: "blob" });
     const blobUrl = URL.createObjectURL(content);
     const a = document.createElement("a");
     a.href = blobUrl;
     a.download = "3d-images.zip";
+    a.style.display = "none";
     document.body.appendChild(a);
     a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(blobUrl);
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    }, 1000);
     setSelectedIds(new Set());
+    setSelectMode(false);
   }
 
   // ── Retry ──
