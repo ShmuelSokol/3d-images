@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSupabase } from "@/lib/supabase";
 import { jobQueue } from "@/lib/job-queue";
+import { getSessionId, getUserId, setSessionCookie } from "@/lib/session";
 import sharp from "sharp";
 
 export async function POST(req: NextRequest) {
@@ -17,6 +18,9 @@ export async function POST(req: NextRequest) {
     const fillOcclusion = (formData.get("fillOcclusion") as string) !== "false";
     const isVideo = file.type.startsWith("video/");
     const buffer = Buffer.from(await file.arrayBuffer());
+
+    const sessionId = getSessionId(req);
+    const userId = getUserId(req);
 
     // Upload original to Supabase Storage
     const supabase = getSupabase();
@@ -65,13 +69,17 @@ export async function POST(req: NextRequest) {
         fillOcclusion,
         status: "pending",
         mediaType: isVideo ? "video" : "image",
+        sessionId,
+        userId,
       },
     });
 
     // Kick the queue (fire and forget)
     jobQueue.kick().catch(console.error);
 
-    return NextResponse.json(job);
+    const res = NextResponse.json(job);
+    setSessionCookie(res, sessionId, req);
+    return res;
   } catch (err) {
     console.error("Upload error:", err);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });
@@ -80,15 +88,27 @@ export async function POST(req: NextRequest) {
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const userId = getUserId(req);
+    const sessionId = getSessionId(req);
+
+    // If logged in, show all user's jobs; otherwise show session's jobs
+    const where = userId
+      ? { userId }
+      : { sessionId };
+
     const jobs = await prisma.image.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       take: 50,
     });
-    return NextResponse.json(jobs, {
+
+    const res = NextResponse.json(jobs, {
       headers: { "Cache-Control": "no-store" },
     });
+    setSessionCookie(res, sessionId, req);
+    return res;
   } catch (err) {
     console.error("Fetch error:", err);
     return NextResponse.json({ error: "Fetch failed" }, { status: 500 });

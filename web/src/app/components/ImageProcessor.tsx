@@ -35,6 +35,12 @@ export default function ImageProcessor() {
   const [intensity, setIntensity] = useState(10);
   const [colorMode, setColorMode] = useState("dubois");
   const [fillOcclusion, setFillOcclusion] = useState(true);
+  const [user, setUser] = useState<{ id: string; email: string } | null>(null);
+  const [showAuth, setShowAuth] = useState(false);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -49,6 +55,14 @@ export default function ImageProcessor() {
     } catch {
       /* ignore poll errors */
     }
+  }, []);
+
+  // Check auth state on mount
+  useEffect(() => {
+    fetch("/api/auth")
+      .then((r) => r.json())
+      .then((d) => { if (d.user) setUser(d.user); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -123,6 +137,43 @@ export default function ImageProcessor() {
     }
   }
 
+  // ── Auth ──
+  async function handleAuth(action: "login" | "register") {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, email: authEmail, password: authPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthError(data.error || "Failed");
+        return;
+      }
+      setUser(data.user);
+      setShowAuth(false);
+      setAuthEmail("");
+      setAuthPassword("");
+      fetchJobs(); // Refresh to show user's jobs
+    } catch {
+      setAuthError("Network error");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleLogout() {
+    await fetch("/api/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "logout" }),
+    });
+    setUser(null);
+    fetchJobs(); // Refresh to show session jobs only
+  }
+
   // ── Rotate ──
   async function handleRotate(id: string, angle: number) {
     try {
@@ -169,12 +220,71 @@ export default function ImageProcessor() {
   return (
     <div className="max-w-7xl mx-auto p-4 sm:p-8">
       {/* Header */}
-      <header className="text-center mb-5">
-        <h1 className="text-4xl font-bold mb-1">3D Image Generator</h1>
-        <p className="text-gray-400 text-sm">
+      <header className="mb-5">
+        <div className="flex items-center justify-between mb-1">
+          <div />
+          <h1 className="text-4xl font-bold">3D Image Generator</h1>
+          <div className="text-right">
+            {user ? (
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-400">{user.email}</span>
+                <button
+                  onClick={handleLogout}
+                  className="text-gray-500 hover:text-gray-300 transition-colors"
+                >
+                  Log out
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAuth(!showAuth)}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Log in to save history
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="text-gray-400 text-sm text-center">
           Upload photos or videos &rarr; server-side AI depth &rarr; anaglyph
           3D
         </p>
+        {showAuth && !user && (
+          <div className="max-w-xs mx-auto mt-3 bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
+            <input
+              type="email"
+              placeholder="Email"
+              value={authEmail}
+              onChange={(e) => setAuthEmail(e.target.value)}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500"
+            />
+            <input
+              type="password"
+              placeholder="Password"
+              value={authPassword}
+              onChange={(e) => setAuthPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleAuth("login")}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500"
+            />
+            {authError && <p className="text-red-400 text-xs">{authError}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleAuth("login")}
+                disabled={authLoading}
+                className="flex-1 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                Log in
+              </button>
+              <button
+                onClick={() => handleAuth("register")}
+                disabled={authLoading}
+                className="flex-1 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+              >
+                Register
+              </button>
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Controls */}

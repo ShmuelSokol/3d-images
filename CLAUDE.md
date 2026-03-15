@@ -8,8 +8,8 @@ Upload photos or videos → server-side AI estimates depth per pixel → generat
 - **Database**: Prisma 5 + Supabase PostgreSQL
 - **Storage**: Supabase Storage (bucket: `3d-images`)
 - **Deployment**: Railway (standalone Docker, node:18-slim)
-- **Depth AI**: `@xenova/transformers` + `onnxruntime-node` (server-side)
-  - Model: `Xenova/depth-anything-base-hf` (~99MB, cached in TRANSFORMERS_CACHE)
+- **Depth AI**: `@huggingface/transformers` v3 + `onnxruntime-node` (server-side)
+  - Model: `onnx-community/depth-anything-v2-large` (cached in HF_HOME=/app/.cache)
 - **Video**: ffmpeg for frame extraction + reassembly (MP4 output)
 
 ## Architecture
@@ -58,8 +58,11 @@ railway up web --path-as-root --detach
 - Health check at `/api/health`
 - DB table prefix: `td_` (3d = td)
 - Dockerfile uses node:18-slim (Debian), NOT Alpine — onnxruntime-node needs glibc
-- `@xenova/transformers` is now an npm dependency (server-side), NOT CDN-loaded
+- `@huggingface/transformers` v3 is the depth AI dependency (server-side, NOT CDN-loaded)
 - Must be in `experimental.serverComponentsExternalPackages` in next.config.mjs
 - Video: max 60s, 15fps, 720p, output is MP4 (H.264)
-- Model downloads ~99MB on first job (cached in /app/.cache on Railway)
-- NODE_OPTIONS="--max-old-space-size=512" set in Dockerfile
+- Model downloads on first job (cached in /app/.cache on Railway via HF_HOME)
+- NODE_OPTIONS="--max-old-space-size=1024" set in Dockerfile
+- Anaglyph modes: Dubois optimized (default) and classic red/cyan
+- Shift formula: `(0.3 + d * 0.7) * intensity` — ensures all objects get 3D pop-out
+- Disocclusion fill: fills gap artifacts at depth boundaries (on by default)

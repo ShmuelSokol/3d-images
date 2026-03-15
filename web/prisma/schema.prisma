@@ -11,6 +11,16 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  images    Image[]
+
+  @@map("td_user")
+}
+
 model Image {
   id          String   @id @default(cuid())
   originalUrl String
@@ -30,6 +40,9 @@ model Image {
   duration    Float?
   frameCount  Int?
   framesDone  Int      @default(0)
+  sessionId   String?
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

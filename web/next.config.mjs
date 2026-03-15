@@ -7,6 +7,8 @@ const nextConfig = {
       "@huggingface/transformers",
       "onnxruntime-node",
       "sharp",
+      "bcryptjs",
+      "jsonwebtoken",
     ],
   },
 };

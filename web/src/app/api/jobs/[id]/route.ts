@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSupabase } from "@/lib/supabase";
+import { getSessionId, getUserId } from "@/lib/session";
 import sharp from "sharp";
 import { jobQueue } from "@/lib/job-queue";
 
@@ -67,6 +68,8 @@ export async function PATCH(
         .getPublicUrl(`originals/${storageName}`);
 
       // Create new job with rotated image
+      const sessionId = getSessionId(req);
+      const userId = getUserId(req);
       const newJob = await prisma.image.create({
         data: {
           originalUrl: publicUrl,
@@ -78,6 +81,8 @@ export async function PATCH(
           fillOcclusion: job.fillOcclusion,
           status: "pending",
           mediaType: "image",
+          sessionId,
+          userId,
         },
       });
 

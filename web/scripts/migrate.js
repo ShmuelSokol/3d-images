@@ -13,6 +13,19 @@ async function main() {
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "colorMode" TEXT NOT NULL DEFAULT 'dubois'`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "fillOcclusion" BOOLEAN NOT NULL DEFAULT true`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "distanceMapUrl" TEXT`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "sessionId" TEXT`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "userId" TEXT`,
+    `CREATE TABLE IF NOT EXISTS td_user (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password TEXT NOT NULL,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_image_user') THEN
+        ALTER TABLE td_image ADD CONSTRAINT fk_image_user FOREIGN KEY ("userId") REFERENCES td_user(id);
+      END IF;
+    END $$`,
   ];
 
   for (const sql of statements) {
