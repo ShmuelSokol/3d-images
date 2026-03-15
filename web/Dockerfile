@@ -47,6 +47,12 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/onnxruntime-node ./node_modules/onnxruntime-node
 COPY --from=builder /app/node_modules/@huggingface ./node_modules/@huggingface
 COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
+COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
+COPY --from=builder /app/node_modules/jsonwebtoken ./node_modules/jsonwebtoken
+COPY --from=builder /app/node_modules/@supabase ./node_modules/@supabase
+
+# Worker script for child process job processing
+COPY --from=builder /app/scripts/worker.js ./scripts/worker.js
 
 USER nextjs
 EXPOSE 3000
