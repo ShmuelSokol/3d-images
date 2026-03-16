@@ -193,50 +193,37 @@ export default function ImageProcessor() {
   }
 
   async function handleDownloadSelected() {
-    const toDownload = jobs.filter(
-      (j) => selectedIds.has(j.id) && j.status === "done" && (j.anaglyphUrl || j.videoUrl)
-    );
-    if (toDownload.length === 0) return;
-
-    if (toDownload.length === 1) {
-      const j = toDownload[0];
-      const url = j.mediaType === "video" ? j.videoUrl! : j.anaglyphUrl!;
-      const ext = j.mediaType === "video" ? "mp4" : "png";
-      handleDownload(url, `3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`);
-      return;
-    }
-
-    // Multiple files — download as zip
-    const JSZip = (await import("jszip")).default;
-    const zip = new JSZip();
-    const fetches = toDownload.map(async (j, i) => {
-      const url = j.mediaType === "video" ? j.videoUrl! : j.anaglyphUrl!;
-      const ext = j.mediaType === "video" ? "mp4" : "png";
-      const base = j.fileName.replace(/\.[^.]+$/, "");
-      const name = `3d-${base}-${i + 1}.${ext}`;
-      try {
-        const res = await fetch(url);
-        if (!res.ok) return;
-        const buf = await res.arrayBuffer();
-        zip.file(name, buf);
-      } catch { /* skip failed downloads */ }
+    const ids = Array.from(selectedIds).filter((id) => {
+      const j = jobs.find((job) => job.id === id);
+      return j && j.status === "done" && (j.anaglyphUrl || j.videoUrl);
     });
-    await Promise.all(fetches);
-    if (Object.keys(zip.files).length === 0) return;
-    const content = await zip.generateAsync({ type: "blob" });
-    const blobUrl = URL.createObjectURL(content);
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = "3d-images.zip";
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    }, 1000);
-    setSelectedIds(new Set());
-    setSelectMode(false);
+    if (ids.length === 0) return;
+
+    try {
+      const res = await fetch("/api/jobs/download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const match = disposition.match(/filename="(.+?)"/);
+      const filename = match ? match[1] : ids.length === 1 ? "3d-image.png" : "3d-images.zip";
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(blobUrl);
+      }, 1000);
+      setSelectedIds(new Set());
+      setSelectMode(false);
+    } catch { /* ignore */ }
   }
 
   // ── Retry ──
