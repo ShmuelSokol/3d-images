@@ -49,6 +49,7 @@ export default function ImageProcessor() {
   const [adjustIntensity, setAdjustIntensity] = useState<number | null>(null);
   const [adjustColorMode, setAdjustColorMode] = useState<string | null>(null);
   const [adjustFillOcclusion, setAdjustFillOcclusion] = useState<boolean | null>(null);
+  const [downloading, setDownloading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -199,6 +200,7 @@ export default function ImageProcessor() {
     });
     if (ids.length === 0) return;
 
+    setDownloading(true);
     try {
       const res = await fetch("/api/jobs/download", {
         method: "POST",
@@ -224,6 +226,26 @@ export default function ImageProcessor() {
       setSelectedIds(new Set());
       setSelectMode(false);
     } catch { /* ignore */ }
+    finally { setDownloading(false); }
+  }
+
+  // ── Save to Photos (Web Share API) ──
+  async function handleSaveToPhotos(url: string, fileName: string) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const ext = fileName.match(/\.([^.]+)$/)?.[1] || "png";
+      const file = new File([blob], fileName, { type: blob.type || `image/${ext}` });
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file] });
+      } else {
+        // Fallback: regular download
+        handleDownload(url, fileName);
+      }
+    } catch {
+      // User cancelled share or not supported — fallback
+      handleDownload(url, fileName);
+    }
   }
 
   // ── Retry ──
@@ -484,9 +506,10 @@ export default function ImageProcessor() {
               {selectMode && selectedIds.size > 0 && (
                 <button
                   onClick={handleDownloadSelected}
-                  className="text-[10px] px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white transition-colors"
+                  disabled={downloading}
+                  className="text-[10px] px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white transition-colors disabled:opacity-50"
                 >
-                  Download {selectedIds.size}
+                  {downloading ? "Zipping..." : `Download ${selectedIds.size}`}
                 </button>
               )}
             </div>
@@ -628,12 +651,20 @@ export default function ImageProcessor() {
                         </button>
                       )}
                       {selected.anaglyphUrl && (
-                        <button
-                          onClick={() => handleDownload(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
-                          className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
-                        >
-                          Download 3D
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handleDownload(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
+                            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
+                          >
+                            Download
+                          </button>
+                          <button
+                            onClick={() => handleSaveToPhotos(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
+                            className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-medium transition-colors"
+                          >
+                            Save to Photos
+                          </button>
+                        </>
                       )}
                       <button
                         onClick={() => handleDelete(selected.id)}
@@ -777,12 +808,20 @@ export default function ImageProcessor() {
                       <h2 className="text-sm font-medium truncate flex-1">{selected.fileName}</h2>
                       <div className="flex gap-2">
                         {selected.videoUrl && (
-                          <button
-                            onClick={() => handleDownload(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
-                            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
-                          >
-                            Download 3D Video
-                          </button>
+                          <>
+                            <button
+                              onClick={() => handleDownload(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
+                              className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
+                            >
+                              Download
+                            </button>
+                            <button
+                              onClick={() => handleSaveToPhotos(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
+                              className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-medium transition-colors"
+                            >
+                              Save to Photos
+                            </button>
+                          </>
                         )}
                         <button
                           onClick={() => handleDelete(selected.id)}

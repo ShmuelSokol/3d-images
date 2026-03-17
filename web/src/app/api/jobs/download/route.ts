@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import JSZip from "jszip";
 
+// Allow up to 5 minutes for large batch downloads
+export const maxDuration = 300;
+
 export async function POST(req: NextRequest) {
   try {
     const { ids } = await req.json();
@@ -17,7 +20,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No completed jobs found" }, { status: 404 });
     }
 
-    // Single file — redirect directly
+    // Single file — return directly
     if (jobs.length === 1) {
       const j = jobs[0];
       const url = j.mediaType === "video" ? j.videoUrl : j.anaglyphUrl;
@@ -34,30 +37,33 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Multiple files — zip
+    // Multiple files — fetch all in parallel, then zip
     const zip = new JSZip();
     const usedNames = new Set<string>();
 
-    for (const j of jobs) {
-      const url = j.mediaType === "video" ? j.videoUrl : j.anaglyphUrl;
-      if (!url) continue;
-      try {
+    const results = await Promise.allSettled(
+      jobs.map(async (j) => {
+        const url = j.mediaType === "video" ? j.videoUrl : j.anaglyphUrl;
+        if (!url) return null;
         const res = await fetch(url);
-        if (!res.ok) continue;
+        if (!res.ok) return null;
         const buf = Buffer.from(await res.arrayBuffer());
         const ext = j.mediaType === "video" ? "mp4" : "png";
-        let name = `3d-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`;
-        // Deduplicate names
-        let counter = 1;
-        while (usedNames.has(name)) {
-          name = `3d-${j.fileName.replace(/\.[^.]+$/, "")}-${counter}.${ext}`;
-          counter++;
-        }
-        usedNames.add(name);
-        zip.file(name, buf);
-      } catch {
-        // skip failed downloads
+        return { buf, ext, fileName: j.fileName };
+      })
+    );
+
+    for (const r of results) {
+      if (r.status !== "fulfilled" || !r.value) continue;
+      const { buf, ext, fileName } = r.value;
+      let name = `3d-${fileName.replace(/\.[^.]+$/, "")}.${ext}`;
+      let counter = 1;
+      while (usedNames.has(name)) {
+        name = `3d-${fileName.replace(/\.[^.]+$/, "")}-${counter}.${ext}`;
+        counter++;
       }
+      usedNames.add(name);
+      zip.file(name, buf);
     }
 
     if (Object.keys(zip.files).length === 0) {
