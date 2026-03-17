@@ -27,6 +27,8 @@ model Image {
   depthMapUrl    String?
   distanceMapUrl String?
   anaglyphUrl    String?
+  stereogramUrl  String?
+  sbsUrl         String?
   videoUrl    String?
   fileName    String
   width       Int

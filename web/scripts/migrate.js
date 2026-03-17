@@ -26,6 +26,8 @@ async function main() {
         ALTER TABLE td_image ADD CONSTRAINT fk_image_user FOREIGN KEY ("userId") REFERENCES td_user(id);
       END IF;
     END $$`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "stereogramUrl" TEXT`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "sbsUrl" TEXT`,
   ];
 
   for (const sql of statements) {

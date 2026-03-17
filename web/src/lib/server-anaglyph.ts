@@ -340,3 +340,155 @@ export async function decodeToRaw(
     .toBuffer({ resolveWithObject: true });
   return { data, width: info.width, height: info.height };
 }
+
+/**
+ * Generate a Single Image Random Dot Stereogram (Magic Eye) from a depth map.
+ */
+export function generateAutostereogram(
+  depthData: Float32Array,
+  depthWidth: number,
+  depthHeight: number,
+  outputWidth: number,
+  outputHeight: number
+): RawImage {
+  // Normalize depth
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) {
+    normalized[i] = (depthData[i] - minD) / rangeD; // 0=far, 1=close
+  }
+
+  const stripWidth = Math.round(outputWidth / 7);
+  const maxShift = Math.round(stripWidth * 0.35);
+  const out = Buffer.alloc(outputWidth * outputHeight * 4);
+
+  // Seeded random for reproducibility
+  let seed = 42;
+  function rand() {
+    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+    return ((seed >>> 0) / 0xffffffff);
+  }
+
+  for (let y = 0; y < outputHeight; y++) {
+    // Generate random dot strip for leftmost column
+    const strip: number[][] = [];
+    for (let x = 0; x < stripWidth; x++) {
+      strip.push([Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)]);
+    }
+
+    // Link array: each pixel links to another pixel that should have the same color
+    const same = new Int32Array(outputWidth);
+    for (let x = 0; x < outputWidth; x++) same[x] = x;
+
+    // Compute constraints from depth
+    for (let x = 0; x < outputWidth; x++) {
+      const d = sampleDepth(normalized, depthWidth, depthHeight, x, y, outputWidth, outputHeight);
+      const sep = stripWidth - Math.round(d * maxShift);
+      const left = Math.round(x - sep / 2);
+      const right = left + sep;
+      if (left >= 0 && right < outputWidth) {
+        // Link left and right — they should show the same color
+        let l = left, r = right;
+        while (same[l] !== l) l = same[l];
+        while (same[r] !== r) r = same[r];
+        if (l !== r) {
+          if (l < r) same[r] = l;
+          else same[l] = r;
+        }
+      }
+    }
+
+    // Resolve chains
+    for (let x = 0; x < outputWidth; x++) {
+      let root = x;
+      while (same[root] !== root) root = same[root];
+      same[x] = root;
+    }
+
+    // Assign colors
+    const colors: (number[] | null)[] = new Array(outputWidth).fill(null);
+    for (let x = 0; x < outputWidth; x++) {
+      const root = same[x];
+      if (!colors[root]) {
+        colors[root] = [Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)];
+      }
+      const c = colors[root]!;
+      const idx = (y * outputWidth + x) * 4;
+      out[idx] = c[0];
+      out[idx + 1] = c[1];
+      out[idx + 2] = c[2];
+      out[idx + 3] = 255;
+    }
+  }
+
+  return { data: out, width: outputWidth, height: outputHeight };
+}
+
+/**
+ * Generate a side-by-side stereogram (cross-eye 3D) from raw image + depth.
+ */
+export function generateSideBySide(
+  image: RawImage,
+  depthData: Float32Array,
+  depthWidth: number,
+  depthHeight: number,
+  intensity: number = 10
+): RawImage {
+  const { data: pixels, width, height } = image;
+
+  // Normalize depth
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) {
+    normalized[i] = (depthData[i] - minD) / rangeD;
+  }
+
+  const blurRadius = Math.max(2, Math.round(Math.min(depthWidth, depthHeight) / 150));
+  const smoothed = blurDepth(normalized, depthWidth, depthHeight, blurRadius);
+
+  const outWidth = width * 2 + 2; // 2px divider
+  const out = Buffer.alloc(outWidth * height * 4);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const d = sampleDepth(smoothed, depthWidth, depthHeight, x, y, width, height);
+      const shift = d * intensity;
+
+      // Left eye (shifted right — cross-eye format)
+      const leftSrcX = Math.min(Math.max(x + shift, 0), width - 1);
+      const lIdx = (y * outWidth + x) * 4;
+      out[lIdx] = sampleBilinear(pixels, width, height, leftSrcX, y, 0);
+      out[lIdx + 1] = sampleBilinear(pixels, width, height, leftSrcX, y, 1);
+      out[lIdx + 2] = sampleBilinear(pixels, width, height, leftSrcX, y, 2);
+      out[lIdx + 3] = 255;
+
+      // Right eye (shifted left)
+      const rightSrcX = Math.min(Math.max(x - shift, 0), width - 1);
+      const rIdx = (y * outWidth + width + 2 + x) * 4;
+      out[rIdx] = sampleBilinear(pixels, width, height, rightSrcX, y, 0);
+      out[rIdx + 1] = sampleBilinear(pixels, width, height, rightSrcX, y, 1);
+      out[rIdx + 2] = sampleBilinear(pixels, width, height, rightSrcX, y, 2);
+      out[rIdx + 3] = 255;
+    }
+
+    // Divider line
+    const d1 = (y * outWidth + width) * 4;
+    const d2 = (y * outWidth + width + 1) * 4;
+    out[d1] = out[d2] = 60;
+    out[d1 + 1] = out[d2 + 1] = 60;
+    out[d1 + 2] = out[d2 + 2] = 60;
+    out[d1 + 3] = out[d2 + 3] = 255;
+  }
+
+  return { data: out, width: outWidth, height };
+}

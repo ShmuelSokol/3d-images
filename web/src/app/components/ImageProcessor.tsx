@@ -12,6 +12,8 @@ interface Job {
   depthMapUrl: string | null;
   distanceMapUrl: string | null;
   anaglyphUrl: string | null;
+  stereogramUrl: string | null;
+  sbsUrl: string | null;
   videoUrl: string | null;
   fileName: string;
   width: number;
@@ -50,6 +52,7 @@ export default function ImageProcessor() {
   const [adjustColorMode, setAdjustColorMode] = useState<string | null>(null);
   const [adjustFillOcclusion, setAdjustFillOcclusion] = useState<boolean | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [downloadStyle, setDownloadStyle] = useState<string>("anaglyph");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -205,7 +208,7 @@ export default function ImageProcessor() {
       const res = await fetch("/api/jobs/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ids }),
+        body: JSON.stringify({ ids, style: downloadStyle }),
       });
       if (!res.ok) return;
       const blob = await res.blob();
@@ -504,13 +507,26 @@ export default function ImageProcessor() {
                 {selectMode ? "Cancel" : "Select"}
               </button>
               {selectMode && selectedIds.size > 0 && (
-                <button
-                  onClick={handleDownloadSelected}
-                  disabled={downloading}
-                  className="text-[10px] px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white transition-colors disabled:opacity-50"
-                >
-                  {downloading ? "Zipping..." : `Download ${selectedIds.size}`}
-                </button>
+                <>
+                  <select
+                    value={downloadStyle}
+                    onChange={(e) => setDownloadStyle(e.target.value)}
+                    className="text-[10px] px-1 py-1 bg-gray-800 border border-gray-700 rounded text-gray-300"
+                  >
+                    <option value="anaglyph">Anaglyph</option>
+                    <option value="stereogram">Magic Eye</option>
+                    <option value="sbs">Side-by-Side</option>
+                    <option value="depth">Depth</option>
+                    <option value="colormap">Color Map</option>
+                  </select>
+                  <button
+                    onClick={handleDownloadSelected}
+                    disabled={downloading}
+                    className="text-[10px] px-2 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-white transition-colors disabled:opacity-50"
+                  >
+                    {downloading ? "Zipping..." : `Download ${selectedIds.size}`}
+                  </button>
+                </>
               )}
             </div>
             <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[75vh] pb-2 lg:pb-0">
@@ -791,6 +807,40 @@ export default function ImageProcessor() {
                       ) : (
                         <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
                           Processing...
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-medium text-gray-500 mb-1">
+                        Magic Eye (Autostereogram)
+                      </h3>
+                      {selected.stereogramUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={selected.stereogramUrl}
+                          alt="Autostereogram"
+                          className="w-full rounded-lg border border-gray-800"
+                        />
+                      ) : (
+                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
+                          Reprocess to generate
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-medium text-gray-500 mb-1">
+                        Side-by-Side (Cross-eye 3D)
+                      </h3>
+                      {selected.sbsUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={selected.sbsUrl}
+                          alt="Side-by-Side"
+                          className="w-full rounded-lg border border-gray-800"
+                        />
+                      ) : (
+                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
+                          Reprocess to generate
                         </div>
                       )}
                     </div>

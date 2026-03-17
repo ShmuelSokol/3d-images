@@ -170,30 +170,40 @@ async function main() {
         const rawImg = { data: rawData, width: rawInfo.width, height: rawInfo.height };
 
         const anaglyph = generateAnaglyphServer(rawImg, depth.data, depth.width, depth.height, job.intensity, job.colorMode === "classic" ? "classic" : "dubois", job.fillOcclusion);
+        const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, w, h);
+        const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
 
-        const [anaglyphPng, depthPng, colorMapPng] = await Promise.all([
+        const [anaglyphPng, depthPng, colorMapPng, stereogramPng, sbsPng] = await Promise.all([
           sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer(),
           depthToPng(depth.data, depth.width, depth.height),
           generateColorMap(depth.data, depth.width, depth.height),
+          sharp(stereogram.data, { raw: { width: stereogram.width, height: stereogram.height, channels: 4 } }).png().toBuffer(),
+          sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).png().toBuffer(),
         ]);
 
-        const [anaUpload, depthUpload, distUpload] = await Promise.all([
+        const [anaUpload, depthUpload, distUpload, stereoUpload, sbsUpload] = await Promise.all([
           supabase.storage.from("3d-images").upload(`anaglyph/${jobId}-anaglyph.png`, anaglyphPng, { contentType: "image/png", upsert: true }),
           supabase.storage.from("3d-images").upload(`depth/${jobId}-depth.png`, depthPng, { contentType: "image/png", upsert: true }),
           supabase.storage.from("3d-images").upload(`distance/${jobId}-distance.png`, colorMapPng, { contentType: "image/png", upsert: true }),
+          supabase.storage.from("3d-images").upload(`stereogram/${jobId}-stereogram.png`, stereogramPng, { contentType: "image/png", upsert: true }),
+          supabase.storage.from("3d-images").upload(`sbs/${jobId}-sbs.png`, sbsPng, { contentType: "image/png", upsert: true }),
         ]);
 
         if (anaUpload.error) throw new Error(`Anaglyph upload: ${anaUpload.error.message}`);
         if (depthUpload.error) throw new Error(`Depth upload: ${depthUpload.error.message}`);
         if (distUpload.error) throw new Error(`Color map upload: ${distUpload.error.message}`);
+        if (stereoUpload.error) throw new Error(`Stereogram upload: ${stereoUpload.error.message}`);
+        if (sbsUpload.error) throw new Error(`SBS upload: ${sbsUpload.error.message}`);
 
         const anaglyphUrl = supabase.storage.from("3d-images").getPublicUrl(`anaglyph/${jobId}-anaglyph.png`).data.publicUrl;
         const depthMapUrl = supabase.storage.from("3d-images").getPublicUrl(`depth/${jobId}-depth.png`).data.publicUrl;
         const distanceMapUrl = supabase.storage.from("3d-images").getPublicUrl(`distance/${jobId}-distance.png`).data.publicUrl;
+        const stereogramUrl = supabase.storage.from("3d-images").getPublicUrl(`stereogram/${jobId}-stereogram.png`).data.publicUrl;
+        const sbsUrl = supabase.storage.from("3d-images").getPublicUrl(`sbs/${jobId}-sbs.png`).data.publicUrl;
 
         await prisma.image.update({
           where: { id: jobId },
-          data: { anaglyphUrl, depthMapUrl, distanceMapUrl, width: w, height: h, status: "done" },
+          data: { anaglyphUrl, depthMapUrl, distanceMapUrl, stereogramUrl, sbsUrl, width: w, height: h, status: "done" },
         });
         console.log(`[worker] Image done: ${jobId}`);
       }
@@ -371,6 +381,96 @@ async function generateColorMap(depthData, width, height) {
     rgba[i * 4] = r; rgba[i * 4 + 1] = g; rgba[i * 4 + 2] = b; rgba[i * 4 + 3] = 255;
   }
   return sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
+}
+
+function generateAutostereogram(depthData, dw, dh, outputWidth, outputHeight) {
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
+
+  const stripWidth = Math.round(outputWidth / 7);
+  const maxShift = Math.round(stripWidth * 0.35);
+  const out = Buffer.alloc(outputWidth * outputHeight * 4);
+
+  let seed = 42;
+  function rand() {
+    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+    return ((seed >>> 0) / 0xffffffff);
+  }
+
+  for (let y = 0; y < outputHeight; y++) {
+    const same = new Int32Array(outputWidth);
+    for (let x = 0; x < outputWidth; x++) same[x] = x;
+    for (let x = 0; x < outputWidth; x++) {
+      const d = sampleDepth(normalized, dw, dh, x, y, outputWidth, outputHeight);
+      const sep = stripWidth - Math.round(d * maxShift);
+      const left = Math.round(x - sep / 2);
+      const right = left + sep;
+      if (left >= 0 && right < outputWidth) {
+        let l = left, r = right;
+        while (same[l] !== l) l = same[l];
+        while (same[r] !== r) r = same[r];
+        if (l !== r) { if (l < r) same[r] = l; else same[l] = r; }
+      }
+    }
+    for (let x = 0; x < outputWidth; x++) {
+      let root = x;
+      while (same[root] !== root) root = same[root];
+      same[x] = root;
+    }
+    const colors = new Array(outputWidth).fill(null);
+    for (let x = 0; x < outputWidth; x++) {
+      const root = same[x];
+      if (!colors[root]) colors[root] = [Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)];
+      const c = colors[root];
+      const idx = (y * outputWidth + x) * 4;
+      out[idx] = c[0]; out[idx + 1] = c[1]; out[idx + 2] = c[2]; out[idx + 3] = 255;
+    }
+  }
+  return { data: out, width: outputWidth, height: outputHeight };
+}
+
+function generateSideBySide(image, depthData, dw, dh, intensity) {
+  const { data: pixels, width, height } = image;
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
+  const br = Math.max(2, Math.round(Math.min(dw, dh) / 150));
+  const smoothed = blurDepth(normalized, dw, dh, br);
+  const outWidth = width * 2 + 2;
+  const out = Buffer.alloc(outWidth * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const d = sampleDepth(smoothed, dw, dh, x, y, width, height);
+      const shift = d * intensity;
+      const leftSrcX = Math.min(Math.max(x + shift, 0), width - 1);
+      const lIdx = (y * outWidth + x) * 4;
+      out[lIdx] = sampleBilinear(pixels, width, height, leftSrcX, y, 0);
+      out[lIdx + 1] = sampleBilinear(pixels, width, height, leftSrcX, y, 1);
+      out[lIdx + 2] = sampleBilinear(pixels, width, height, leftSrcX, y, 2);
+      out[lIdx + 3] = 255;
+      const rightSrcX = Math.min(Math.max(x - shift, 0), width - 1);
+      const rIdx = (y * outWidth + width + 2 + x) * 4;
+      out[rIdx] = sampleBilinear(pixels, width, height, rightSrcX, y, 0);
+      out[rIdx + 1] = sampleBilinear(pixels, width, height, rightSrcX, y, 1);
+      out[rIdx + 2] = sampleBilinear(pixels, width, height, rightSrcX, y, 2);
+      out[rIdx + 3] = 255;
+    }
+    const d1 = (y * outWidth + width) * 4;
+    const d2 = (y * outWidth + width + 1) * 4;
+    out[d1] = out[d2] = 60; out[d1+1] = out[d2+1] = 60; out[d1+2] = out[d2+2] = 60; out[d1+3] = out[d2+3] = 255;
+  }
+  return { data: out, width: outWidth, height };
 }
 
 main().catch((err) => {

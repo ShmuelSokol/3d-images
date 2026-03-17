@@ -5,6 +5,8 @@ import { estimateDepth } from "./depth-estimator";
 import {
   generateAnaglyphServer,
   generateColorMap,
+  generateAutostereogram,
+  generateSideBySide,
   decodeToRaw,
   rawToPng,
   depthToPng,
@@ -68,17 +70,23 @@ async function processImageJob(
     fillOcclusion
   );
 
+  // Generate additional formats
+  const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, w, h);
+  const sbs = generateSideBySide(raw, depth.data, depth.width, depth.height, intensity);
+
   // Encode results
-  const [anaglyphPng, depthPng, distanceMapPng] = await Promise.all([
+  const [anaglyphPng, depthPng, distanceMapPng, stereogramPng, sbsPng] = await Promise.all([
     rawToPng(anaglyph),
     depthToPng(depth.data, depth.width, depth.height),
     generateColorMap(depth.data, depth.width, depth.height),
+    rawToPng(stereogram),
+    rawToPng(sbs),
   ]);
 
   // Upload to Supabase
   const supabase = getSupabase();
 
-  const [anaUpload, depthUpload, distUpload] = await Promise.all([
+  const [anaUpload, depthUpload, distUpload, stereoUpload, sbsUpload] = await Promise.all([
     supabase.storage
       .from("3d-images")
       .upload(`anaglyph/${jobId}-anaglyph.png`, anaglyphPng, {
@@ -97,11 +105,25 @@ async function processImageJob(
         contentType: "image/png",
         upsert: true,
       }),
+    supabase.storage
+      .from("3d-images")
+      .upload(`stereogram/${jobId}-stereogram.png`, stereogramPng, {
+        contentType: "image/png",
+        upsert: true,
+      }),
+    supabase.storage
+      .from("3d-images")
+      .upload(`sbs/${jobId}-sbs.png`, sbsPng, {
+        contentType: "image/png",
+        upsert: true,
+      }),
   ]);
 
   if (anaUpload.error) throw new Error(`Anaglyph upload: ${anaUpload.error.message}`);
   if (depthUpload.error) throw new Error(`Depth upload: ${depthUpload.error.message}`);
   if (distUpload.error) throw new Error(`Distance map upload: ${distUpload.error.message}`);
+  if (stereoUpload.error) throw new Error(`Stereogram upload: ${stereoUpload.error.message}`);
+  if (sbsUpload.error) throw new Error(`SBS upload: ${sbsUpload.error.message}`);
 
   const anaglyphUrl = supabase.storage
     .from("3d-images")
@@ -115,6 +137,14 @@ async function processImageJob(
     .from("3d-images")
     .getPublicUrl(`distance/${jobId}-distance.png`).data.publicUrl;
 
+  const stereogramUrl = supabase.storage
+    .from("3d-images")
+    .getPublicUrl(`stereogram/${jobId}-stereogram.png`).data.publicUrl;
+
+  const sbsUrl = supabase.storage
+    .from("3d-images")
+    .getPublicUrl(`sbs/${jobId}-sbs.png`).data.publicUrl;
+
   // Update DB
   await prisma.image.update({
     where: { id: jobId },
@@ -122,6 +152,8 @@ async function processImageJob(
       anaglyphUrl,
       depthMapUrl,
       distanceMapUrl,
+      stereogramUrl,
+      sbsUrl,
       width: w,
       height: h,
       status: "done",
