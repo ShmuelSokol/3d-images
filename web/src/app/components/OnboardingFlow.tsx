@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 
 const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
 const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
+const VIDEO_ID = "cmmwe0ous0000qazwsthfi6mt";
 
 const DEMO = {
   original: `${BASE}/originals/1773749482004-6vqotz14l2.jpeg`,
@@ -20,6 +21,19 @@ const OUTPUTS = [
   { key: "colormap", label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false },
   { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false },
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
+];
+
+const VIDEO_DEMO = {
+  original: `${BASE}/originals/1773859284614-demo-video.mp4`,
+  anaglyph: `${BASE}/videos/${VIDEO_ID}-anaglyph.mp4`,
+  stereogram: `${BASE}/videos/${VIDEO_ID}-stereogram.mp4`,
+  sbs: `${BASE}/videos/${VIDEO_ID}-sbs.mp4`,
+};
+
+const VIDEO_OUTPUTS = [
+  { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500" },
+  { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500" },
+  { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
 ];
 
 // Build a flat gallery of all demo images for lightbox navigation
@@ -60,6 +74,7 @@ interface OnboardingFlowProps {
 
 export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlowProps) {
   const [gallery, setGallery] = useState<{ items: { url: string; label: string }[]; index: number } | null>(null);
+  const [videoTab, setVideoTab] = useState<"anaglyph" | "stereogram" | "sbs">("anaglyph");
 
   const openGallery = useCallback((items: { url: string; label: string }[], index: number) => {
     setGallery({ items, index });
@@ -286,6 +301,70 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
           </svg>
           Video support (paid)
         </div>
+      </div>
+
+      {/* Video demo */}
+      <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-8">
+        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Video Demo</p>
+
+        {/* Video tab switcher */}
+        <div className="flex justify-center gap-2 mb-4">
+          {VIDEO_OUTPUTS.map((v) => (
+            <button
+              key={v.key}
+              onClick={() => setVideoTab(v.key as typeof videoTab)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                videoTab === v.key
+                  ? "bg-gradient-to-r " + v.color + " text-white shadow-lg"
+                  : "bg-gray-800/60 text-gray-400 hover:text-gray-200 hover:bg-gray-800"
+              }`}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Side-by-side: original on left, output on right */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Original video */}
+          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+            <video
+              src={VIDEO_DEMO.original}
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full aspect-video object-cover"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+              <span className="text-xs font-semibold text-white/90">Original Video</span>
+            </div>
+          </div>
+
+          {/* Output video */}
+          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+            <video
+              key={videoTab}
+              src={VIDEO_DEMO[videoTab as keyof typeof VIDEO_DEMO]}
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full aspect-video object-cover"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+              {VIDEO_OUTPUTS.filter((v) => v.key === videoTab).map((v) => (
+                <span key={v.key} className={`text-xs font-semibold bg-gradient-to-r ${v.color} bg-clip-text text-transparent`}>
+                  {v.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <p className="text-[10px] text-gray-600 text-center mt-3">
+          Yosemite Valley &middot; 50 seconds &middot; All 3 formats generated from a single upload
+        </p>
       </div>
 
       {/* More examples — original + all outputs */}
