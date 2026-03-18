@@ -56,7 +56,7 @@ export default function CompareSlider({
 
   // ── Touch handlers ──
 
-  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+  const handleTouchStart = useCallback(() => {
     setIsDragging(true);
   }, []);
 
@@ -109,6 +109,7 @@ export default function CompareSlider({
       onClick={handleContainerClick}
     >
       {/* After image (full, sits behind) */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={afterUrl}
         alt={afterLabel}
@@ -121,6 +122,7 @@ export default function CompareSlider({
         className="absolute inset-0"
         style={{ clipPath: `inset(0 ${100 - position}% 0 0)` }}
       >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={beforeUrl}
           alt={beforeLabel}
