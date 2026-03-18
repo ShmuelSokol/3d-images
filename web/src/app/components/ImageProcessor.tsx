@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
 
 const DepthEditor = lazy(() => import("./DepthEditor"));
+const CompareSlider = lazy(() => import("./CompareSlider"));
 
 // ── Types ──
 
@@ -56,6 +57,7 @@ export default function ImageProcessor() {
   const [activeTab, setActiveTab] = useState<string>("anaglyph");
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -323,7 +325,7 @@ export default function ImageProcessor() {
   }
 
   // Reset adjusters when switching images
-  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); setActiveTab("anaglyph"); }, [selectedId]);
+  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); setActiveTab("anaglyph"); setCompareMode(false); }, [selectedId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -360,16 +362,23 @@ export default function ImageProcessor() {
   ).length;
 
   return (
-    <div className="max-w-7xl mx-auto p-4 sm:p-8">
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
       {/* Header */}
-      <header className="mb-5">
-        <div className="flex items-center justify-between mb-1">
-          <div />
-          <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">3D Image Generator</h1>
-          <div className="text-right">
+      <header className="mb-8 sm:mb-10">
+        <div className="flex items-center justify-between mb-3">
+          <div className="w-24" />
+          <div className="text-center">
+            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
+              3D Image Generator
+            </h1>
+            <p className="text-gray-500 text-xs sm:text-sm mt-1.5">
+              Upload photos or videos &rarr; AI depth estimation &rarr; 6 output formats
+            </p>
+          </div>
+          <div className="w-24 text-right">
             {user ? (
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-gray-400">{user.email}</span>
+              <div className="flex items-center gap-2 text-xs justify-end">
+                <span className="text-gray-500 hidden sm:inline">{user.email}</span>
                 <button
                   onClick={handleLogout}
                   className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -380,17 +389,13 @@ export default function ImageProcessor() {
             ) : (
               <button
                 onClick={() => setShowAuth(!showAuth)}
-                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+                className="text-xs text-gray-600 hover:text-gray-400 transition-colors"
               >
-                Log in to save history
+                Log in
               </button>
             )}
           </div>
         </div>
-        <p className="text-gray-400 text-sm text-center">
-          Upload photos or videos &rarr; server-side AI depth &rarr; anaglyph
-          3D
-        </p>
         {showAuth && !user && (
           <div className="max-w-xs mx-auto mt-3 bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
             <input
@@ -430,55 +435,53 @@ export default function ImageProcessor() {
       </header>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-4 mb-5 bg-gray-900/50 backdrop-blur-sm rounded-xl px-4 py-3 border border-gray-800/50">
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span className="font-medium text-gray-300">Intensity</span>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-medium text-gray-400">Intensity</span>
           <input
             type="range"
             min="1"
             max="40"
             value={intensity}
             onChange={(e) => setIntensity(parseInt(e.target.value))}
-            className="w-28 accent-cyan-500 h-1.5"
+            className="w-20 sm:w-28 accent-cyan-500 h-1.5"
           />
-          <span className="text-cyan-400 tabular-nums w-5 text-right font-mono">
+          <span className="text-cyan-400 tabular-nums w-5 text-right font-mono text-xs">
             {intensity}
           </span>
         </div>
 
-        <div className="w-px h-5 bg-gray-700" />
+        <div className="hidden sm:block w-px h-5 bg-gray-700/50" />
 
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span className="font-medium text-gray-300">Color</span>
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-medium text-gray-400">Color</span>
           <select
             value={colorMode}
             onChange={(e) => setColorMode(e.target.value)}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:outline-none transition-colors"
+            className="bg-gray-800 border border-gray-700/50 rounded-lg px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 focus:outline-none transition-all"
           >
-            <option value="dubois">Dubois (better color)</option>
-            <option value="classic">Classic red/cyan</option>
+            <option value="dubois">Dubois</option>
+            <option value="classic">Classic</option>
           </select>
         </div>
 
-        <div className="w-px h-5 bg-gray-700" />
-
-        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer group">
+        <label className="flex items-center gap-1.5 text-xs cursor-pointer group">
           <input
             type="checkbox"
             checked={fillOcclusion}
             onChange={(e) => setFillOcclusion(e.target.checked)}
-            className="accent-cyan-500"
+            className="accent-cyan-500 rounded"
           />
-          <span className="font-medium text-gray-300 group-hover:text-gray-200 transition-colors">Fill gaps</span>
+          <span className="text-gray-400 group-hover:text-gray-300 transition-colors">Fill gaps</span>
         </label>
 
-        <div className="flex-1" />
+        <div className="flex-1 min-w-0" />
 
         {activeCount > 0 && (
-          <div className="flex items-center gap-2 bg-cyan-500/10 rounded-lg px-3 py-1.5">
-            <div className="w-3 h-3 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-cyan-400 font-medium">
-              {activeCount} job{activeCount > 1 ? "s" : ""} processing
+          <div className="flex items-center gap-2 bg-cyan-500/10 rounded-full px-3 py-1">
+            <div className="w-2.5 h-2.5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-[11px] text-cyan-400 font-medium whitespace-nowrap">
+              {activeCount} processing
             </span>
           </div>
         )}
@@ -499,7 +502,7 @@ export default function ImageProcessor() {
                    ${isDragging
                      ? "border-cyan-400 bg-cyan-500/10 scale-[1.01] shadow-lg shadow-cyan-500/10"
                      : "hover:border-cyan-500 hover:bg-gray-900/50"}
-                   ${jobs.length === 0 ? "p-14 border-gray-600" : "p-4 border-gray-700"}`}
+                   ${jobs.length === 0 ? "p-10 sm:p-16 border-gray-600" : "p-4 border-gray-700"}`}
       >
         {uploading ? (
           <div className="flex items-center justify-center gap-3">
@@ -537,9 +540,9 @@ export default function ImageProcessor() {
 
       {/* Main */}
       {jobs.length > 0 && (
-        <div className="flex flex-col lg:flex-row gap-5">
+        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
           {/* Sidebar */}
-          <div className="lg:w-48 flex-shrink-0">
+          <div className="lg:w-44 flex-shrink-0">
             {/* Select mode toggle + download button */}
             <div className="flex items-center gap-2 mb-2">
               <button
@@ -776,69 +779,99 @@ export default function ImageProcessor() {
                   {/* Output tabs */}
                   {(() => {
                     const tabs = [
-                      { id: "anaglyph", label: "Anaglyph 3D", url: selected.anaglyphUrl },
-                      { id: "original", label: "Original", url: selected.originalUrl },
-                      { id: "depth", label: "Depth Map", url: selected.depthMapUrl },
-                      { id: "colormap", label: "Color Map", url: selected.distanceMapUrl },
-                      { id: "stereogram", label: "Magic Eye", url: selected.stereogramUrl },
-                      { id: "sbs", label: "Side-by-Side", url: selected.sbsUrl },
+                      { id: "anaglyph", label: "3D", labelFull: "Anaglyph 3D", url: selected.anaglyphUrl },
+                      { id: "original", label: "Orig", labelFull: "Original", url: selected.originalUrl },
+                      { id: "depth", label: "Depth", labelFull: "Depth Map", url: selected.depthMapUrl },
+                      { id: "colormap", label: "Color", labelFull: "Color Map", url: selected.distanceMapUrl },
+                      { id: "stereogram", label: "Eye", labelFull: "Magic Eye", url: selected.stereogramUrl },
+                      { id: "sbs", label: "SBS", labelFull: "Side-by-Side", url: selected.sbsUrl },
                     ];
                     const current = tabs.find(t => t.id === activeTab) || tabs[0];
                     const baseName = selected.fileName.replace(/\.[^.]+$/, "");
+                    const canCompare = compareMode && current.id !== "original" && current.url && selected.originalUrl;
                     return (
                       <div>
-                        {/* Tab bar */}
-                        <div className="flex gap-1 overflow-x-auto pb-2 mb-3 scrollbar-hide">
-                          {tabs.map(tab => (
+                        {/* Tab bar + compare toggle */}
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="flex gap-1 overflow-x-auto scrollbar-hide flex-1">
+                            {tabs.map(tab => (
+                              <button
+                                key={tab.id}
+                                onClick={() => setActiveTab(tab.id)}
+                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all
+                                  ${activeTab === tab.id
+                                    ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
+                                    : tab.url
+                                      ? "bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 active:scale-95"
+                                      : "bg-gray-800/30 text-gray-600 cursor-not-allowed"}`}
+                                disabled={!tab.url && tab.id !== "original"}
+                                title={tab.labelFull}
+                              >
+                                <span className="sm:hidden">{tab.label}</span>
+                                <span className="hidden sm:inline">{tab.labelFull}</span>
+                              </button>
+                            ))}
+                          </div>
+                          {/* Compare toggle */}
+                          {activeTab !== "original" && current.url && (
                             <button
-                              key={tab.id}
-                              onClick={() => setActiveTab(tab.id)}
-                              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all
-                                ${activeTab === tab.id
-                                  ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
-                                  : tab.url
-                                    ? "bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700"
-                                    : "bg-gray-800/50 text-gray-600 cursor-not-allowed"}`}
-                              disabled={!tab.url && tab.id !== "original"}
+                              onClick={() => setCompareMode(!compareMode)}
+                              className={`px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all flex-shrink-0
+                                ${compareMode
+                                  ? "bg-purple-600 text-white shadow-lg shadow-purple-500/20"
+                                  : "bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 active:scale-95"}`}
                             >
-                              {tab.label}
-                              {!tab.url && tab.id !== "original" && " --"}
+                              Compare
                             </button>
-                          ))}
+                          )}
                         </div>
-                        {/* Active image */}
+                        {/* Active image or compare slider */}
                         <div className="relative group">
-                          {current.url ? (
+                          {canCompare ? (
+                            <Suspense fallback={<div className="w-full aspect-video bg-gray-800/50 rounded-xl animate-pulse" />}>
+                              <CompareSlider
+                                beforeUrl={selected.originalUrl}
+                                afterUrl={current.url!}
+                                beforeLabel="Original"
+                                afterLabel={current.labelFull}
+                              />
+                            </Suspense>
+                          ) : current.url ? (
                             <>
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={current.url}
-                                alt={current.label}
-                                className="w-full rounded-xl border border-gray-800 cursor-zoom-in transition-transform"
+                                alt={current.labelFull}
+                                className="w-full rounded-xl border border-gray-800/50 cursor-zoom-in transition-all hover:border-gray-700"
                                 onClick={() => setLightboxUrl(current.url)}
                               />
                               {/* Overlay actions */}
-                              <div className="absolute bottom-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {current.id !== "original" && (
-                                  <>
-                                    <button
-                                      onClick={() => handleDownload(current.url!, `${current.id}-${baseName}.png`)}
-                                      className="px-3 py-1.5 bg-black/70 backdrop-blur-sm hover:bg-black/90 rounded-lg text-xs font-medium transition-colors"
-                                    >
-                                      Download
-                                    </button>
-                                    <button
-                                      onClick={() => handleSaveToPhotos(current.url!, `${current.id}-${baseName}.png`)}
-                                      className="px-3 py-1.5 bg-black/70 backdrop-blur-sm hover:bg-black/90 rounded-lg text-xs font-medium transition-colors"
-                                    >
-                                      Share
-                                    </button>
-                                  </>
-                                )}
+                              <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                                <span className="text-[10px] text-white/60 bg-black/40 backdrop-blur-sm rounded px-2 py-0.5 pointer-events-none">
+                                  Click to expand
+                                </span>
+                                <div className="flex gap-1.5 pointer-events-auto">
+                                  {current.id !== "original" && (
+                                    <>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleDownload(current.url!, `${current.id}-${baseName}.png`); }}
+                                        className="px-3 py-1.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 active:scale-95 rounded-lg text-xs font-medium transition-all"
+                                      >
+                                        Download
+                                      </button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); handleSaveToPhotos(current.url!, `${current.id}-${baseName}.png`); }}
+                                        className="px-3 py-1.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 active:scale-95 rounded-lg text-xs font-medium transition-all"
+                                      >
+                                        Share
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             </>
                           ) : (
-                            <div className="w-full aspect-video bg-gray-800/50 rounded-xl border border-gray-800 flex items-center justify-center text-gray-500 text-sm">
+                            <div className="w-full aspect-video bg-gray-800/30 rounded-xl border border-dashed border-gray-700 flex items-center justify-center text-gray-500 text-sm">
                               Reprocess to generate
                             </div>
                           )}
