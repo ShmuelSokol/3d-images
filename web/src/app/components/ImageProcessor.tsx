@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense, memo
 
 const DepthEditor = lazy(() => import("./DepthEditor"));
 const CompareSlider = lazy(() => import("./CompareSlider"));
+const OnboardingFlow = lazy(() => import("./OnboardingFlow"));
 
 // ── Types ──
 
@@ -648,8 +649,8 @@ export default function ImageProcessor() {
         )}
       </header>
 
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40">
+      {/* Controls — hidden during onboarding */}
+      <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40 ${jobs.length === 0 && !uploading ? "hidden" : ""}`}>
         <div className="flex items-center gap-2 text-xs">
           <span className="font-medium text-gray-400">Intensity</span>
           <input
@@ -701,6 +702,13 @@ export default function ImageProcessor() {
         )}
       </div>
 
+      {/* Onboarding flow — shown only when no jobs */}
+      {jobs.length === 0 && !uploading && (
+        <Suspense fallback={null}>
+          <OnboardingFlow onGetStarted={() => fileInputRef.current?.click()} />
+        </Suspense>
+      )}
+
       {/* Upload */}
       <div
         onDrop={(e) => {
@@ -716,7 +724,7 @@ export default function ImageProcessor() {
                    ${isDragging
                      ? "border-cyan-400 bg-cyan-500/10 scale-[1.01] shadow-lg shadow-cyan-500/10"
                      : "hover:border-cyan-500 hover:bg-gray-900/50"}
-                   ${jobs.length === 0 ? "p-10 sm:p-16 border-gray-600" : "p-4 border-gray-700"}`}
+                   ${jobs.length === 0 ? "p-4 border-gray-600" : "p-4 border-gray-700"}`}
       >
         {uploading ? (
           <div className="flex items-center justify-center gap-3">
@@ -724,18 +732,9 @@ export default function ImageProcessor() {
             <p className="text-sm text-cyan-400">Uploading...</p>
           </div>
         ) : jobs.length === 0 ? (
-          <>
-            <div className="text-5xl mb-4 opacity-90">{isDragging ? "+" : "📸"}</div>
-            <p className="text-lg font-medium text-gray-200 mb-1">
-              {isDragging ? "Drop to convert" : "Drop images or videos here"}
-            </p>
-            <p className="text-sm text-gray-500">
-              JPG, PNG, WebP, MP4, WebM, MOV &mdash; multiple files at once
-            </p>
-            <p className="text-xs text-gray-600 mt-3">
-              AI depth estimation &rarr; 6 output formats &mdash; processing continues even if you close this page
-            </p>
-          </>
+          <p className="text-sm text-gray-400 hover:text-gray-300 transition-colors">
+            {isDragging ? "Drop to convert" : "Or drop files here"}
+          </p>
         ) : (
           <p className="text-sm text-gray-400 hover:text-gray-300 transition-colors">+ Add more files</p>
         )}

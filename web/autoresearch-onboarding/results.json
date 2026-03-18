@@ -1,0 +1,33 @@
+{
+  "skill_name": "3d-image-onboarding",
+  "status": "complete",
+  "current_experiment": 1,
+  "baseline_score": 0.0,
+  "best_score": 100.0,
+  "experiments": [
+    {
+      "id": 0,
+      "score": 0,
+      "max_score": 6,
+      "pass_rate": 0.0,
+      "status": "baseline",
+      "description": "original — no onboarding flow, just header + upload area"
+    },
+    {
+      "id": 1,
+      "score": 6,
+      "max_score": 6,
+      "pass_rate": 100.0,
+      "status": "keep",
+      "description": "Full onboarding: 3-step flow, real demo images, interactive format switcher, CTA, mobile responsive"
+    }
+  ],
+  "eval_breakdown": [
+    {"name": "Clear Steps", "pass_count": 1, "total": 1},
+    {"name": "Visual Demo", "pass_count": 1, "total": 1},
+    {"name": "Mobile Responsive", "pass_count": 1, "total": 1},
+    {"name": "Seamless Integration", "pass_count": 1, "total": 1},
+    {"name": "Call to Action", "pass_count": 1, "total": 1},
+    {"name": "Output Format Showcase", "pass_count": 1, "total": 1}
+  ]
+}
