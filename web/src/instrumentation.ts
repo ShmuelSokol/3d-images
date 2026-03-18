@@ -11,6 +11,10 @@ export async function register() {
       console.log(`[startup] Reset ${stuck.count} stuck jobs to pending`);
     }
 
+    // Check for pending jobs
+    const pending = await prisma.image.count({ where: { status: "pending" } });
+    console.log(`[startup] ${pending} pending job(s) found`);
+
     // Kick the queue in case there are pending jobs
     const { jobQueue } = await import("@/lib/job-queue");
     jobQueue.kick().catch(console.error);
