@@ -86,11 +86,14 @@ export default function ImageProcessor() {
     fetchJobs();
   }, [fetchJobs]);
 
+  const hasActiveRef = useRef(false);
   useEffect(() => {
-    // Poll every 3s if there are active jobs, otherwise every 30s
+    // Only reset interval when active/idle state actually changes
     const hasActive = jobs.some(
       (j) => j.status === "pending" || j.status === "processing"
     );
+    if (hasActive === hasActiveRef.current && pollRef.current) return;
+    hasActiveRef.current = hasActive;
     const interval = hasActive ? 3000 : 30000;
 
     if (pollRef.current) clearInterval(pollRef.current);
@@ -840,6 +843,8 @@ export default function ImageProcessor() {
                               <img
                                 src={current.url}
                                 alt={current.labelFull}
+                                loading="lazy"
+                                decoding="async"
                                 className="w-full rounded-xl border border-gray-800/50 cursor-zoom-in transition-all hover:border-gray-700"
                                 onClick={() => setLightboxUrl(current.url)}
                               />
