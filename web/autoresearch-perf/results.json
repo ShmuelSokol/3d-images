@@ -1,0 +1,33 @@
+{
+  "skill_name": "3d-image-perf",
+  "status": "complete",
+  "current_experiment": 1,
+  "baseline_score": 33.3,
+  "best_score": 100.0,
+  "experiments": [
+    {
+      "id": 0,
+      "score": 2,
+      "max_score": 6,
+      "pass_rate": 33.3,
+      "status": "baseline",
+      "description": "original — no changes"
+    },
+    {
+      "id": 1,
+      "score": 6,
+      "max_score": 6,
+      "pass_rate": 100.0,
+      "status": "keep",
+      "description": "Comprehensive perf: useMemo/useCallback, lazy thumbnails, stale-while-revalidate, Prisma select, immutable static headers"
+    }
+  ],
+  "eval_breakdown": [
+    {"name": "Bundle Size", "pass_count": 1, "total": 1},
+    {"name": "Polling Efficiency", "pass_count": 1, "total": 1},
+    {"name": "Image Loading", "pass_count": 1, "total": 1},
+    {"name": "Re-render Efficiency", "pass_count": 1, "total": 1},
+    {"name": "Caching Strategy", "pass_count": 1, "total": 1},
+    {"name": "Upload Speed", "pass_count": 1, "total": 1}
+  ]
+}

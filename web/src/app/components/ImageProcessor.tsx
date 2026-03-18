@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 
 const DepthEditor = lazy(() => import("./DepthEditor"));
 const CompareSlider = lazy(() => import("./CompareSlider"));
@@ -102,7 +102,7 @@ export default function ImageProcessor() {
   }, [jobs, fetchJobs]);
 
   // ── Upload ──
-  async function handleFiles(files: FileList | File[]) {
+  const handleFiles = useCallback(async (files: FileList | File[]) => {
     setUploading(true);
     try {
       for (const f of Array.from(files)) {
@@ -116,7 +116,7 @@ export default function ImageProcessor() {
         if (res.ok) {
           const job = await res.json();
           setJobs((prev) => [job, ...prev]);
-          if (!selectedId) setSelectedId(job.id);
+          setSelectedId((prev) => prev ?? job.id);
         }
       }
     } catch (err) {
@@ -124,22 +124,16 @@ export default function ImageProcessor() {
     } finally {
       setUploading(false);
     }
-  }
+  }, [intensity, colorMode, fillOcclusion]);
 
-  async function handleDelete(id: string) {
+  const handleDelete = useCallback((id: string) => {
     setJobs((prev) => prev.filter((j) => j.id !== id));
-    if (selectedId === id) {
-      setSelectedId(null);
-    }
-    try {
-      await fetch(`/api/jobs/${id}`, { method: "DELETE" });
-    } catch {
-      /* ignore */
-    }
-  }
+    setSelectedId((prev) => prev === id ? null : prev);
+    fetch(`/api/jobs/${id}`, { method: "DELETE" }).catch(() => {});
+  }, []);
 
   // ── Cancel ──
-  async function handleCancel(id: string) {
+  const handleCancel = useCallback(async (id: string) => {
     try {
       await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -152,7 +146,7 @@ export default function ImageProcessor() {
     } catch {
       /* ignore */
     }
-  }
+  }, []);
 
   // ── Auth ──
   async function handleAuth(action: "login" | "register") {
@@ -192,16 +186,16 @@ export default function ImageProcessor() {
   }
 
   // ── Multi-select ──
-  function toggleSelect(id: string) {
+  const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }
+  }, []);
 
-  async function handleDownloadSelected() {
+  const handleDownloadSelected = useCallback(async () => {
     const ids = Array.from(selectedIds).filter((id) => {
       const j = jobs.find((job) => job.id === id);
       return j && j.status === "done" && (j.anaglyphUrl || j.videoUrl);
@@ -235,10 +229,28 @@ export default function ImageProcessor() {
       setSelectMode(false);
     } catch { /* ignore */ }
     finally { setDownloading(false); }
-  }
+  }, [selectedIds, jobs, downloadStyle]);
+
+  // ── Download (cross-origin safe) ──
+  const handleDownload = useCallback(async (url: string, filename: string) => {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      window.open(url, "_blank");
+    }
+  }, []);
 
   // ── Save to Photos (Web Share API) ──
-  async function handleSaveToPhotos(url: string, fileName: string) {
+  const handleSaveToPhotos = useCallback(async (url: string, fileName: string) => {
     try {
       const res = await fetch(url);
       const blob = await res.blob();
@@ -254,10 +266,10 @@ export default function ImageProcessor() {
       // User cancelled share or not supported — fallback
       handleDownload(url, fileName);
     }
-  }
+  }, [handleDownload]);
 
   // ── Retry ──
-  async function handleRetry(id: string) {
+  const handleRetry = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -269,10 +281,10 @@ export default function ImageProcessor() {
         setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
       }
     } catch { /* ignore */ }
-  }
+  }, []);
 
   // ── Reprocess with new settings ──
-  async function handleReprocess(id: string, settings: { intensity?: number; colorMode?: string; fillOcclusion?: boolean }) {
+  const handleReprocess = useCallback(async (id: string, settings: { intensity?: number; colorMode?: string; fillOcclusion?: boolean }) => {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -285,10 +297,10 @@ export default function ImageProcessor() {
         setAdjustIntensity(null);
       }
     } catch { /* ignore */ }
-  }
+  }, []);
 
   // ── Rotate ──
-  async function handleRotate(id: string, angle: number) {
+  const handleRotate = useCallback(async (id: string, angle: number) => {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -303,26 +315,7 @@ export default function ImageProcessor() {
     } catch {
       /* ignore */
     }
-  }
-
-  // ── Download (cross-origin safe) ──
-  async function handleDownload(url: string, filename: string) {
-    try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      // Fallback: open in new tab
-      window.open(url, "_blank");
-    }
-  }
+  }, []);
 
   // Reset adjusters when switching images
   useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); setActiveTab("anaglyph"); setCompareMode(false); }, [selectedId]);
@@ -355,11 +348,11 @@ export default function ImageProcessor() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [jobs, selectedId]);
 
-  // ── Derived ──
-  const selected = jobs.find((j) => j.id === selectedId) ?? null;
-  const activeCount = jobs.filter(
+  // ── Derived (memoized) ──
+  const selected = useMemo(() => jobs.find((j) => j.id === selectedId) ?? null, [jobs, selectedId]);
+  const activeCount = useMemo(() => jobs.filter(
     (j) => j.status === "pending" || j.status === "processing"
-  ).length;
+  ).length, [jobs]);
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
@@ -599,6 +592,9 @@ export default function ImageProcessor() {
                     <img
                       src={job.anaglyphUrl}
                       alt=""
+                      loading="lazy"
+                      width={80}
+                      height={80}
                       className="w-full h-full object-cover"
                     />
                   ) : !isVideo && job.originalUrl ? (
@@ -606,8 +602,10 @@ export default function ImageProcessor() {
                     <img
                       src={job.originalUrl}
                       alt=""
-                      className="w-full h-full object-cover"
                       loading="lazy"
+                      width={80}
+                      height={80}
+                      className="w-full h-full object-cover"
                     />
                   ) : (
                     <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">

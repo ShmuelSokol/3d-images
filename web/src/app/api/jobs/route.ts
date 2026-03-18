@@ -102,10 +102,33 @@ export async function GET(req: NextRequest) {
       where,
       orderBy: { createdAt: "desc" },
       take: 50,
+      select: {
+        id: true,
+        originalUrl: true,
+        depthMapUrl: true,
+        distanceMapUrl: true,
+        anaglyphUrl: true,
+        stereogramUrl: true,
+        sbsUrl: true,
+        videoUrl: true,
+        fileName: true,
+        width: true,
+        height: true,
+        intensity: true,
+        colorMode: true,
+        fillOcclusion: true,
+        status: true,
+        error: true,
+        mediaType: true,
+        duration: true,
+        frameCount: true,
+        framesDone: true,
+        createdAt: true,
+      },
     });
 
     const res = NextResponse.json(jobs, {
-      headers: { "Cache-Control": "no-store" },
+      headers: { "Cache-Control": "private, max-age=0, stale-while-revalidate=3" },
     });
     setSessionCookie(res, sessionId, req);
     return res;
