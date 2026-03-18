@@ -172,7 +172,7 @@ export async function processJob(jobId: string): Promise<void> {
 
   try {
     if (job.mediaType === "video") {
-      const { videoUrl } = await processVideoJob(
+      const { videoUrl, stereogramUrl, sbsUrl } = await processVideoJob(
         jobId,
         job.originalUrl,
         job.intensity,
@@ -182,7 +182,7 @@ export async function processJob(jobId: string): Promise<void> {
       );
       await prisma.image.update({
         where: { id: jobId },
-        data: { status: "done", videoUrl, framesDone: job.frameCount || 0 },
+        data: { status: "done", videoUrl, stereogramUrl, sbsUrl, framesDone: job.frameCount || 0 },
       });
       console.log(`[job] Video done: ${jobId}`);
     } else {

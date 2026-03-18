@@ -4,7 +4,7 @@ import JSZip from "jszip";
 
 export const maxDuration = 300;
 
-type StyleType = "anaglyph" | "stereogram" | "sbs" | "depth" | "colormap";
+type StyleType = "anaglyph" | "stereogram" | "sbs" | "depth" | "colormap" | "all-3d";
 
 function getUrlForStyle(job: Record<string, unknown>, style: StyleType): string | null {
   switch (style) {
@@ -16,19 +16,30 @@ function getUrlForStyle(job: Record<string, unknown>, style: StyleType): string 
   }
 }
 
-const STYLE_PREFIX: Record<StyleType, string> = {
+function getAll3DUrls(job: Record<string, unknown>): { url: string; prefix: string }[] {
+  const isVideo = job.mediaType === "video";
+  const entries = [
+    { url: (isVideo ? job.videoUrl : job.anaglyphUrl) as string | null, prefix: "3d" },
+    { url: job.stereogramUrl as string | null, prefix: "stereogram" },
+    { url: job.sbsUrl as string | null, prefix: "sbs" },
+  ];
+  return entries.filter((e): e is { url: string; prefix: string } => !!e.url);
+}
+
+const STYLE_PREFIX: Record<string, string> = {
   anaglyph: "3d",
   stereogram: "stereogram",
   sbs: "sbs",
   depth: "depth",
   colormap: "colormap",
+  "all-3d": "all-3d",
 };
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { ids, style: rawStyle } = body;
-    const style: StyleType = ["anaglyph", "stereogram", "sbs", "depth", "colormap"].includes(rawStyle) ? rawStyle : "anaglyph";
+    const style: StyleType = ["anaglyph", "stereogram", "sbs", "depth", "colormap", "all-3d"].includes(rawStyle) ? rawStyle : "anaglyph";
 
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json({ error: "No ids provided" }, { status: 400 });
@@ -43,6 +54,44 @@ export async function POST(req: NextRequest) {
     }
 
     const prefix = STYLE_PREFIX[style];
+
+    // All 3D formats — always zip
+    if (style === "all-3d") {
+      const zip = new JSZip();
+      const usedNames = new Set<string>();
+
+      const fetches: Promise<void>[] = [];
+      for (const j of jobs) {
+        const urls = getAll3DUrls(j as unknown as Record<string, unknown>);
+        for (const { url, prefix: p } of urls) {
+          fetches.push(
+            fetch(url).then(async (res) => {
+              if (!res.ok) return;
+              const buf = Buffer.from(await res.arrayBuffer());
+              const ext = j.mediaType === "video" ? "mp4" : "png";
+              let name = `${p}-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}`;
+              let counter = 1;
+              while (usedNames.has(name)) { name = `${p}-${j.fileName.replace(/\.[^.]+$/, "")}-${counter}.${ext}`; counter++; }
+              usedNames.add(name);
+              zip.file(name, buf);
+            })
+          );
+        }
+      }
+      await Promise.allSettled(fetches);
+
+      if (Object.keys(zip.files).length === 0) {
+        return NextResponse.json({ error: "No files could be fetched" }, { status: 500 });
+      }
+      const zipBytes = await zip.generateAsync({ type: "uint8array", streamFiles: true });
+      return new Response(zipBytes as unknown as BodyInit, {
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Disposition": `attachment; filename="all-3d.zip"`,
+          "Content-Length": zipBytes.length.toString(),
+        },
+      });
+    }
 
     // Single file — stream directly without buffering
     if (jobs.length === 1) {

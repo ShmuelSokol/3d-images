@@ -72,13 +72,19 @@ async function main() {
         const TMP_DIR = "/tmp/3d-jobs";
         const jobDir = join(TMP_DIR, jobId);
         const framesDir = join(jobDir, "frames");
-        const outDir = join(jobDir, "out");
+        const outAnaglyph = join(jobDir, "out-anaglyph");
+        const outStereo = join(jobDir, "out-stereo");
+        const outSbs = join(jobDir, "out-sbs");
         const inputPath = join(jobDir, "input");
-        const outputPath = join(jobDir, "output.mp4");
+        const anaglyphPath = join(jobDir, "output-anaglyph.mp4");
+        const stereoPath = join(jobDir, "output-stereo.mp4");
+        const sbsPath = join(jobDir, "output-sbs.mp4");
 
         try {
           mkdirSync(framesDir, { recursive: true });
-          mkdirSync(outDir, { recursive: true });
+          mkdirSync(outAnaglyph, { recursive: true });
+          mkdirSync(outStereo, { recursive: true });
+          mkdirSync(outSbs, { recursive: true });
 
           // Download
           console.log(`[worker] Downloading video: ${job.originalUrl}`);
@@ -106,6 +112,12 @@ async function main() {
           const frameFiles = readdirSync(framesDir).sort();
           console.log(`[worker] Processing ${frameFiles.length} frames`);
 
+          // Get frame dimensions
+          const firstFrame = Buffer.from(readFileSync(join(framesDir, frameFiles[0])));
+          const { info: firstInfo } = await sharp(firstFrame).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+          const frameW = firstInfo.width;
+          const frameH = firstInfo.height;
+
           for (let i = 0; i < frameFiles.length; i++) {
             if (i % 3 === 0) {
               const check = await prisma.image.findUnique({ where: { id: jobId }, select: { status: true } });
@@ -119,27 +131,57 @@ async function main() {
             const { data: rawData, info: rawInfo } = await sharp(frameBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
             const rawImg = { data: rawData, width: rawInfo.width, height: rawInfo.height };
 
+            // Generate all 3 formats
             const anaglyph = generateAnaglyphServer(rawImg, depth.data, depth.width, depth.height, job.intensity, job.colorMode === "classic" ? "classic" : "dubois", job.fillOcclusion);
-            const outPath = join(outDir, `frame-${String(i + 1).padStart(4, "0")}.png`);
-            const pngBuf = await sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer();
-            writeFileSync(outPath, pngBuf);
+            const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, frameW, frameH);
+            const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
+
+            const pad = String(i + 1).padStart(4, "0");
+            const [anaPng, sterPng, sbsPng] = await Promise.all([
+              sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer(),
+              sharp(stereogram.data, { raw: { width: stereogram.width, height: stereogram.height, channels: 4 } }).png().toBuffer(),
+              sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).png().toBuffer(),
+            ]);
+            writeFileSync(join(outAnaglyph, `frame-${pad}.png`), anaPng);
+            writeFileSync(join(outStereo, `frame-${pad}.png`), sterPng);
+            writeFileSync(join(outSbs, `frame-${pad}.png`), sbsPng);
 
             if (i % 5 === 0 || i === frameFiles.length - 1) {
               await prisma.image.update({ where: { id: jobId }, data: { framesDone: i + 1 } });
             }
           }
 
-          // Reassemble
-          console.log(`[worker] Reassembling video`);
-          execSync(`ffmpeg -y -framerate ${fps} -i "${outDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outputPath}"`, { stdio: "pipe" });
+          // Reassemble 3 videos
+          console.log(`[worker] Reassembling 3 videos`);
+          const ffmpegCmd = (inDir, outPath) => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outPath}"`;
+          execSync(ffmpegCmd(outAnaglyph, anaglyphPath), { stdio: "pipe" });
+          execSync(ffmpegCmd(outStereo, stereoPath), { stdio: "pipe" });
+          execSync(ffmpegCmd(outSbs, sbsPath), { stdio: "pipe" });
 
-          const resultBuf = readFileSync(outputPath);
-          const storagePath = `videos/${jobId}-anaglyph.mp4`;
-          const { error: uploadError } = await supabase.storage.from("3d-images").upload(storagePath, resultBuf, { contentType: "video/mp4", upsert: true });
-          if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-          const { data: { publicUrl: videoUrl } } = supabase.storage.from("3d-images").getPublicUrl(storagePath);
+          // Upload all 3
+          const uploadList = [
+            { local: anaglyphPath, remote: `videos/${jobId}-anaglyph.mp4` },
+            { local: stereoPath, remote: `videos/${jobId}-stereogram.mp4` },
+            { local: sbsPath, remote: `videos/${jobId}-sbs.mp4` },
+          ];
+          const urls = {};
+          for (const u of uploadList) {
+            const buf = readFileSync(u.local);
+            const { error } = await supabase.storage.from("3d-images").upload(u.remote, buf, { contentType: "video/mp4", upsert: true });
+            if (error) throw new Error(`Upload failed (${u.remote}): ${error.message}`);
+            urls[u.remote] = supabase.storage.from("3d-images").getPublicUrl(u.remote).data.publicUrl;
+          }
 
-          await prisma.image.update({ where: { id: jobId }, data: { status: "done", videoUrl, framesDone: totalFrames } });
+          await prisma.image.update({
+            where: { id: jobId },
+            data: {
+              status: "done",
+              videoUrl: urls[`videos/${jobId}-anaglyph.mp4`],
+              stereogramUrl: urls[`videos/${jobId}-stereogram.mp4`],
+              sbsUrl: urls[`videos/${jobId}-sbs.mp4`],
+              framesDone: totalFrames,
+            },
+          });
           console.log(`[worker] Video done: ${jobId}`);
         } finally {
           try { rmSync(jobDir, { recursive: true, force: true }); } catch {}

@@ -789,6 +789,7 @@ export default function ImageProcessor() {
                     <option value="sbs">Side-by-Side</option>
                     <option value="depth">Depth</option>
                     <option value="colormap">Color Map</option>
+                    <option value="all-3d">All 3D Formats</option>
                   </select>
                   <button
                     onClick={handleDownloadSelected}
@@ -1007,6 +1008,30 @@ export default function ImageProcessor() {
                                         Download
                                       </button>
                                       <button
+                                        onClick={async (e) => {
+                                          e.stopPropagation();
+                                          setDownloading(true);
+                                          try {
+                                            const res = await fetch("/api/jobs/download", {
+                                              method: "POST",
+                                              headers: { "Content-Type": "application/json" },
+                                              body: JSON.stringify({ ids: [selected.id], style: "all-3d" }),
+                                            });
+                                            if (!res.ok) return;
+                                            const blob = await res.blob();
+                                            const a = document.createElement("a");
+                                            a.href = URL.createObjectURL(blob);
+                                            a.download = `all-3d-${baseName}.zip`;
+                                            a.click();
+                                            URL.revokeObjectURL(a.href);
+                                          } finally { setDownloading(false); }
+                                        }}
+                                        disabled={downloading}
+                                        className="px-3 py-1.5 bg-purple-600/80 backdrop-blur-sm hover:bg-purple-500/80 active:scale-95 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
+                                      >
+                                        {downloading ? "..." : "All 3D"}
+                                      </button>
+                                      <button
                                         onClick={(e) => { e.stopPropagation(); handleSaveToPhotos(current.url!, `${current.id}-${baseName}.png`); }}
                                         className="px-3 py-1.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 active:scale-95 rounded-lg text-xs font-medium transition-all"
                                       >
@@ -1038,22 +1063,49 @@ export default function ImageProcessor() {
                     <div className="flex flex-wrap items-center gap-3">
                       <h2 className="text-sm font-medium truncate flex-1">{selected.fileName}</h2>
                       <div className="flex gap-2">
-                        {selected.videoUrl && (
-                          <>
-                            <button
-                              onClick={() => handleDownload(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
-                              className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
-                            >
-                              Download
-                            </button>
-                            <button
-                              onClick={() => handleSaveToPhotos(selected.videoUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.mp4`)}
-                              className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-medium transition-colors"
-                            >
-                              Save to Photos
-                            </button>
-                          </>
-                        )}
+                        {(() => {
+                          const vidTabs = [
+                            { id: "anaglyph", url: selected.videoUrl },
+                            { id: "stereogram", url: selected.stereogramUrl },
+                            { id: "sbs", url: selected.sbsUrl },
+                          ];
+                          const currentVid = vidTabs.find(t => t.id === activeTab) || vidTabs[0];
+                          const currentUrl = currentVid?.url;
+                          const baseName = selected.fileName.replace(/\.[^.]+$/, "");
+                          return currentUrl ? (
+                            <>
+                              <button
+                                onClick={() => handleDownload(currentUrl, `${activeTab === "anaglyph" ? "3d" : activeTab}-${baseName}.mp4`)}
+                                className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
+                              >
+                                Download
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  setDownloading(true);
+                                  try {
+                                    const res = await fetch("/api/jobs/download", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ ids: [selected.id], style: "all-3d" }),
+                                    });
+                                    if (!res.ok) return;
+                                    const blob = await res.blob();
+                                    const a = document.createElement("a");
+                                    a.href = URL.createObjectURL(blob);
+                                    a.download = `all-3d-${baseName}.zip`;
+                                    a.click();
+                                    URL.revokeObjectURL(a.href);
+                                  } finally { setDownloading(false); }
+                                }}
+                                disabled={downloading}
+                                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                              >
+                                {downloading ? "Zipping..." : "All 3D"}
+                              </button>
+                            </>
+                          ) : null;
+                        })()}
                         <button
                           onClick={() => handleDelete(selected.id)}
                           className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
@@ -1061,6 +1113,30 @@ export default function ImageProcessor() {
                           Remove
                         </button>
                       </div>
+                    </div>
+                    {/* Video format tabs */}
+                    <div className="flex gap-1 mb-1">
+                      {[
+                        { id: "anaglyph", label: "3D", labelFull: "Anaglyph 3D", url: selected.videoUrl },
+                        { id: "stereogram", label: "Eye", labelFull: "Magic Eye", url: selected.stereogramUrl },
+                        { id: "sbs", label: "SBS", labelFull: "Side-by-Side", url: selected.sbsUrl },
+                      ].map(tab => (
+                        <button
+                          key={tab.id}
+                          onClick={() => setActiveTab(tab.id)}
+                          className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all
+                            ${activeTab === tab.id
+                              ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
+                              : tab.url
+                                ? "bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 active:scale-95"
+                                : "bg-gray-800/30 text-gray-600 cursor-not-allowed"}`}
+                          disabled={!tab.url}
+                          title={tab.labelFull}
+                        >
+                          <span className="sm:hidden">{tab.label}</span>
+                          <span className="hidden sm:inline">{tab.labelFull}</span>
+                        </button>
+                      ))}
                     </div>
                     {/* Settings row */}
                     <div className="flex flex-wrap items-center gap-3 text-xs">
@@ -1106,15 +1182,23 @@ export default function ImageProcessor() {
                       )}
                     </div>
                   </div>
-                  {selected.videoUrl && (
-                    <video
-                      key={selected.id}
-                      src={selected.videoUrl}
-                      controls
-                      loop
-                      className="max-w-2xl mx-auto rounded-lg border border-gray-800"
-                    />
-                  )}
+                  {(() => {
+                    const vidTabs = [
+                      { id: "anaglyph", url: selected.videoUrl },
+                      { id: "stereogram", url: selected.stereogramUrl },
+                      { id: "sbs", url: selected.sbsUrl },
+                    ];
+                    const currentVid = vidTabs.find(t => t.id === activeTab) || vidTabs[0];
+                    return currentVid?.url ? (
+                      <video
+                        key={`${selected.id}-${activeTab}`}
+                        src={currentVid.url}
+                        controls
+                        loop
+                        className="max-w-2xl mx-auto rounded-lg border border-gray-800"
+                      />
+                    ) : null;
+                  })()}
                 </div>
               )}
 

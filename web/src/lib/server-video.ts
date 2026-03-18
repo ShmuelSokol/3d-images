@@ -4,6 +4,8 @@ import { join } from "path";
 import { estimateDepth } from "./depth-estimator";
 import {
   generateAnaglyphServer,
+  generateAutostereogram,
+  generateSideBySide,
   decodeToRaw,
   rawToPng,
 } from "./server-anaglyph";
@@ -22,16 +24,22 @@ export async function processVideoJob(
   model: string,
   colorMode: string = "dubois",
   fillOcclusion: boolean = true
-): Promise<{ videoUrl: string }> {
+): Promise<{ videoUrl: string; stereogramUrl: string; sbsUrl: string }> {
   const jobDir = join(TMP_DIR, jobId);
   const framesDir = join(jobDir, "frames");
-  const outDir = join(jobDir, "out");
+  const outAnaglyph = join(jobDir, "out-anaglyph");
+  const outStereo = join(jobDir, "out-stereo");
+  const outSbs = join(jobDir, "out-sbs");
   const inputPath = join(jobDir, "input");
-  const outputPath = join(jobDir, "output.mp4");
+  const anaglyphPath = join(jobDir, "output-anaglyph.mp4");
+  const stereoPath = join(jobDir, "output-stereo.mp4");
+  const sbsPath = join(jobDir, "output-sbs.mp4");
 
   try {
     mkdirSync(framesDir, { recursive: true });
-    mkdirSync(outDir, { recursive: true });
+    mkdirSync(outAnaglyph, { recursive: true });
+    mkdirSync(outStereo, { recursive: true });
+    mkdirSync(outSbs, { recursive: true });
 
     // Download original video
     console.log(`[video] Downloading: ${originalUrl}`);
@@ -75,6 +83,12 @@ export async function processVideoJob(
     const frameFiles = readdirSync(framesDir).sort();
     console.log(`[video] Processing ${frameFiles.length} frames`);
 
+    // Get frame dimensions for stereogram
+    const firstFrame = Buffer.from(readFileSync(join(framesDir, frameFiles[0])));
+    const firstRaw = await decodeToRaw(firstFrame);
+    const frameW = firstRaw.width;
+    const frameH = firstRaw.height;
+
     for (let i = 0; i < frameFiles.length; i++) {
       // Check if job was cancelled
       if (i % 3 === 0) {
@@ -88,27 +102,25 @@ export async function processVideoJob(
       const framePath = join(framesDir, frameFiles[i]);
       const frameBuffer = Buffer.from(readFileSync(framePath));
 
-      // Depth estimation
+      // Depth estimation (expensive — only once per frame)
       const depth = await estimateDepth(frameBuffer, model);
-
-      // Decode frame to raw RGBA
       const raw = await decodeToRaw(frameBuffer);
 
-      // Generate anaglyph
+      // Generate all 3 formats
       const anaglyph = generateAnaglyphServer(
-        raw,
-        depth.data,
-        depth.width,
-        depth.height,
-        intensity,
-        (colorMode === "classic" ? "classic" : "dubois"),
-        fillOcclusion
+        raw, depth.data, depth.width, depth.height,
+        intensity, (colorMode === "classic" ? "classic" : "dubois"), fillOcclusion
       );
+      const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, frameW, frameH);
+      const sbs = generateSideBySide(raw, depth.data, depth.width, depth.height, intensity);
 
-      // Save processed frame
-      const outPath = join(outDir, `frame-${String(i + 1).padStart(4, "0")}.png`);
-      const pngBuf = await rawToPng(anaglyph);
-      writeFileSync(outPath, pngBuf);
+      const pad = String(i + 1).padStart(4, "0");
+      const [anaPng, sterPng, sbsPng] = await Promise.all([
+        rawToPng(anaglyph), rawToPng(stereogram), rawToPng(sbs),
+      ]);
+      writeFileSync(join(outAnaglyph, `frame-${pad}.png`), anaPng);
+      writeFileSync(join(outStereo, `frame-${pad}.png`), sterPng);
+      writeFileSync(join(outSbs, `frame-${pad}.png`), sbsPng);
 
       // Update progress
       if (i % 5 === 0 || i === frameFiles.length - 1) {
@@ -119,32 +131,35 @@ export async function processVideoJob(
       }
     }
 
-    // Reassemble video with original audio
-    console.log(`[video] Reassembling video`);
-    execSync(
-      `ffmpeg -y -framerate ${fps} -i "${outDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outputPath}"`,
-      { stdio: "pipe" }
-    );
+    // Reassemble 3 videos with original audio
+    console.log(`[video] Reassembling 3 videos`);
+    const ffmpegBase = (inDir: string, outPath: string) =>
+      `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outPath}"`;
+    execSync(ffmpegBase(outAnaglyph, anaglyphPath), { stdio: "pipe" });
+    execSync(ffmpegBase(outStereo, stereoPath), { stdio: "pipe" });
+    execSync(ffmpegBase(outSbs, sbsPath), { stdio: "pipe" });
 
-    // Upload result
-    const resultBuf = readFileSync(outputPath);
+    // Upload all 3
     const supabase = getSupabase();
-    const storagePath = `videos/${jobId}-anaglyph.mp4`;
+    const uploads = [
+      { local: anaglyphPath, remote: `videos/${jobId}-anaglyph.mp4` },
+      { local: stereoPath, remote: `videos/${jobId}-stereogram.mp4` },
+      { local: sbsPath, remote: `videos/${jobId}-sbs.mp4` },
+    ];
 
-    const { error: uploadError } = await supabase.storage
-      .from("3d-images")
-      .upload(storagePath, resultBuf, {
-        contentType: "video/mp4",
-        upsert: true,
-      });
+    const urls: Record<string, string> = {};
+    for (const u of uploads) {
+      const buf = readFileSync(u.local);
+      const { error } = await supabase.storage.from("3d-images").upload(u.remote, buf, { contentType: "video/mp4", upsert: true });
+      if (error) throw new Error(`Upload failed (${u.remote}): ${error.message}`);
+      urls[u.remote] = supabase.storage.from("3d-images").getPublicUrl(u.remote).data.publicUrl;
+    }
 
-    if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
-
-    const {
-      data: { publicUrl },
-    } = supabase.storage.from("3d-images").getPublicUrl(storagePath);
-
-    return { videoUrl: publicUrl };
+    return {
+      videoUrl: urls[`videos/${jobId}-anaglyph.mp4`],
+      stereogramUrl: urls[`videos/${jobId}-stereogram.mp4`],
+      sbsUrl: urls[`videos/${jobId}-sbs.mp4`],
+    };
   } finally {
     // Cleanup
     try {
