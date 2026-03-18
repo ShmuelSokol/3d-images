@@ -44,24 +44,24 @@ export async function POST(req: NextRequest) {
 
     const prefix = STYLE_PREFIX[style];
 
-    // Single file
+    // Single file — stream directly without buffering
     if (jobs.length === 1) {
       const j = jobs[0];
       const url = getUrlForStyle(j as unknown as Record<string, unknown>, style);
       if (!url) return NextResponse.json({ error: "No output file for this style" }, { status: 404 });
-      const res = await fetch(url);
-      if (!res.ok) return NextResponse.json({ error: "Download failed" }, { status: 500 });
-      const buf = Buffer.from(await res.arrayBuffer());
+      const upstream = await fetch(url);
+      if (!upstream.ok || !upstream.body) return NextResponse.json({ error: "Download failed" }, { status: 500 });
       const ext = j.mediaType === "video" ? "mp4" : "png";
-      return new NextResponse(buf, {
+      return new Response(upstream.body, {
         headers: {
           "Content-Type": j.mediaType === "video" ? "video/mp4" : "image/png",
           "Content-Disposition": `attachment; filename="${prefix}-${j.fileName.replace(/\.[^.]+$/, "")}.${ext}"`,
+          ...(upstream.headers.get("content-length") ? { "Content-Length": upstream.headers.get("content-length")! } : {}),
         },
       });
     }
 
-    // Multiple — zip
+    // Multiple — zip (still needs buffering for zip format, but fetch files in parallel with streaming)
     const zip = new JSZip();
     const usedNames = new Set<string>();
 
@@ -94,12 +94,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No files could be fetched" }, { status: 500 });
     }
 
-    const zipBuffer = await zip.generateAsync({ type: "arraybuffer" });
+    // Generate zip as Uint8Array for Response compatibility
+    const zipBytes = await zip.generateAsync({ type: "uint8array", streamFiles: true });
 
-    return new NextResponse(Buffer.from(zipBuffer) as unknown as BodyInit, {
+    return new Response(zipBytes as unknown as BodyInit, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition": `attachment; filename="${prefix}-images.zip"`,
+        "Content-Length": zipBytes.length.toString(),
       },
     });
   } catch (err) {

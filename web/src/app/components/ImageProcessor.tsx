@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense, memo } from "react";
 
 const DepthEditor = lazy(() => import("./DepthEditor"));
 const CompareSlider = lazy(() => import("./CompareSlider"));
@@ -30,6 +30,79 @@ interface Job {
   framesDone: number;
   createdAt: string;
 }
+
+// ── Memoized thumbnail ──
+
+interface JobThumbProps {
+  job: Job;
+  isSelected: boolean;
+  isChecked: boolean;
+  selectMode: boolean;
+  onClick: () => void;
+}
+
+const JobThumbnail = memo(function JobThumbnail({ job, isSelected, isChecked, selectMode, onClick }: JobThumbProps) {
+  const isVideo = job.mediaType === "video";
+  const pct =
+    isVideo && job.status === "processing" && job.frameCount && job.frameCount > 0
+      ? Math.round((job.framesDone / job.frameCount) * 100)
+      : null;
+
+  return (
+    <button
+      onClick={onClick}
+      className={`relative flex-shrink-0 w-20 h-20 lg:w-full lg:h-auto lg:aspect-square
+                 rounded-lg overflow-hidden border-2 transition-all duration-150
+                 ${isSelected && !selectMode ? "border-cyan-500 ring-1 ring-cyan-500/30" : isChecked ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
+    >
+      {/* Thumbnail */}
+      {job.anaglyphUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={job.anaglyphUrl} alt="" loading="lazy" width={80} height={80} className="w-full h-full object-cover" />
+      ) : !isVideo && job.originalUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={job.originalUrl} alt="" loading="lazy" width={80} height={80} className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">
+          {isVideo ? "\uD83C\uDFAC" : "\uD83D\uDCF7"}
+        </div>
+      )}
+
+      {/* Top badges */}
+      <div className="absolute top-0.5 left-0.5 flex gap-0.5">
+        {isVideo && (
+          <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">VID</div>
+        )}
+        <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-cyan-300">{job.intensity}</div>
+      </div>
+
+      {/* Progress overlay */}
+      {pct !== null && (
+        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+          <span className="text-xs font-bold text-cyan-400 tabular-nums">{pct}%</span>
+        </div>
+      )}
+
+      {/* Select checkbox */}
+      {selectMode && (
+        <div className="absolute top-0.5 right-0.5">
+          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] ${isChecked ? "bg-cyan-500 border-cyan-500 text-white" : "border-white/70 bg-black/40"}`}>
+            {isChecked && "\u2713"}
+          </div>
+        </div>
+      )}
+
+      {/* Status badge */}
+      <div className="absolute bottom-0.5 right-0.5">
+        {job.status === "done" && !selectMode && <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />}
+        {job.status === "error" && <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />}
+        {job.status === "pending" && <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />}
+        {job.status === "processing" && pct === null && <span className="block w-2.5 h-2.5 bg-cyan-400 rounded-full animate-pulse shadow" />}
+        {job.status === "cancelled" && <span className="block w-2.5 h-2.5 bg-gray-500 rounded-full shadow" />}
+      </div>
+    </button>
+  );
+});
 
 // ── Component ──
 
@@ -62,12 +135,25 @@ export default function ImageProcessor() {
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Polling ──
-  const fetchJobs = useCallback(async () => {
+  const fetchAllJobs = useCallback(async () => {
     try {
       const res = await fetch("/api/jobs");
       if (res.ok) {
         const data = await res.json();
         setJobs(data);
+      }
+    } catch {
+      /* ignore poll errors */
+    }
+  }, []);
+
+  // Poll a single job by ID and merge into state
+  const fetchSingleJob = useCallback(async (id: string) => {
+    try {
+      const res = await fetch(`/api/jobs/${id}`);
+      if (res.ok) {
+        const job = await res.json();
+        setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
       }
     } catch {
       /* ignore poll errors */
@@ -83,26 +169,37 @@ export default function ImageProcessor() {
   }, []);
 
   useEffect(() => {
-    fetchJobs();
-  }, [fetchJobs]);
+    fetchAllJobs();
+  }, [fetchAllJobs]);
 
   const hasActiveRef = useRef(false);
+  const pollModeRef = useRef<string | null>(null);
   useEffect(() => {
-    // Only reset interval when active/idle state actually changes
     const hasActive = jobs.some(
       (j) => j.status === "pending" || j.status === "processing"
     );
-    if (hasActive === hasActiveRef.current && pollRef.current) return;
+    // Selective polling: if a single job is selected and active, poll just that job
+    const selectedIsActive = selectedId && jobs.find(
+      (j) => j.id === selectedId && (j.status === "pending" || j.status === "processing")
+    );
+    const pollMode = selectedIsActive ? selectedId : hasActive ? "all" : "idle";
+
+    if (pollMode === pollModeRef.current && pollRef.current) return;
+    pollModeRef.current = pollMode;
     hasActiveRef.current = hasActive;
+
     const interval = hasActive ? 3000 : 30000;
+    const pollFn = selectedIsActive
+      ? () => fetchSingleJob(selectedId!)
+      : fetchAllJobs;
 
     if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(fetchJobs, interval);
+    pollRef.current = setInterval(pollFn, interval);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [jobs, fetchJobs]);
+  }, [jobs, selectedId, fetchAllJobs, fetchSingleJob]);
 
   // ── Upload ──
   const handleFiles = useCallback(async (files: FileList | File[]) => {
@@ -170,7 +267,7 @@ export default function ImageProcessor() {
       setShowAuth(false);
       setAuthEmail("");
       setAuthPassword("");
-      fetchJobs(); // Refresh to show user's jobs
+      fetchAllJobs(); // Refresh to show user's jobs
     } catch {
       setAuthError("Network error");
     } finally {
@@ -185,7 +282,7 @@ export default function ImageProcessor() {
       body: JSON.stringify({ action: "logout" }),
     });
     setUser(null);
-    fetchJobs(); // Refresh to show session jobs only
+    fetchAllJobs(); // Refresh to show session jobs only
   }
 
   // ── Multi-select ──
@@ -571,102 +668,16 @@ export default function ImageProcessor() {
               )}
             </div>
             <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[75vh] pb-2 lg:pb-0">
-            {jobs.map((job) => {
-              const isVideo = job.mediaType === "video";
-              const pct =
-                isVideo &&
-                job.status === "processing" &&
-                job.frameCount &&
-                job.frameCount > 0
-                  ? Math.round((job.framesDone / job.frameCount) * 100)
-                  : null;
-
-              return (
-                <button
-                  key={job.id}
-                  onClick={() => { if (selectMode) { toggleSelect(job.id); } else { setSelectedId(job.id); } }}
-                  className={`relative flex-shrink-0 w-20 h-20 lg:w-full lg:h-auto lg:aspect-square
-                             rounded-lg overflow-hidden border-2 transition-all duration-150
-                             ${selectedId === job.id && !selectMode ? "border-cyan-500 ring-1 ring-cyan-500/30" : selectedIds.has(job.id) ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
-                >
-                  {/* Thumbnail */}
-                  {job.anaglyphUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={job.anaglyphUrl}
-                      alt=""
-                      loading="lazy"
-                      width={80}
-                      height={80}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : !isVideo && job.originalUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={job.originalUrl}
-                      alt=""
-                      loading="lazy"
-                      width={80}
-                      height={80}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">
-                      {isVideo ? "🎬" : "📷"}
-                    </div>
-                  )}
-
-                  {/* Top badges */}
-                  <div className="absolute top-0.5 left-0.5 flex gap-0.5">
-                    {isVideo && (
-                      <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">
-                        VID
-                      </div>
-                    )}
-                    <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-cyan-300">
-                      {job.intensity}
-                    </div>
-                  </div>
-
-                  {/* Progress overlay */}
-                  {pct !== null && (
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                      <span className="text-xs font-bold text-cyan-400 tabular-nums">
-                        {pct}%
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Select checkbox */}
-                  {selectMode && (
-                    <div className="absolute top-0.5 right-0.5">
-                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] ${selectedIds.has(job.id) ? "bg-cyan-500 border-cyan-500 text-white" : "border-white/70 bg-black/40"}`}>
-                        {selectedIds.has(job.id) && "✓"}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Status badge */}
-                  <div className="absolute bottom-0.5 right-0.5">
-                    {job.status === "done" && !selectMode && (
-                      <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />
-                    )}
-                    {job.status === "error" && (
-                      <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />
-                    )}
-                    {job.status === "pending" && (
-                      <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />
-                    )}
-                    {job.status === "processing" && pct === null && (
-                      <span className="block w-2.5 h-2.5 bg-cyan-400 rounded-full animate-pulse shadow" />
-                    )}
-                    {job.status === "cancelled" && (
-                      <span className="block w-2.5 h-2.5 bg-gray-500 rounded-full shadow" />
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+            {jobs.map((job) => (
+              <JobThumbnail
+                key={job.id}
+                job={job}
+                isSelected={selectedId === job.id}
+                isChecked={selectedIds.has(job.id)}
+                selectMode={selectMode}
+                onClick={() => { if (selectMode) { toggleSelect(job.id); } else { setSelectedId(job.id); } }}
+              />
+            ))}
           </div>
           </div>
 
@@ -771,7 +782,7 @@ export default function ImageProcessor() {
                         jobId={selected.id}
                         depthMapUrl={selected.depthMapUrl}
                         originalUrl={selected.originalUrl}
-                        onSave={() => { setEditingDepth(false); fetchJobs(); }}
+                        onSave={() => { setEditingDepth(false); fetchAllJobs(); }}
                         onClose={() => setEditingDepth(false)}
                       />
                     </Suspense>
@@ -964,9 +975,9 @@ export default function ImageProcessor() {
                   </div>
                   {selected.videoUrl && (
                     <video
+                      key={selected.id}
                       src={selected.videoUrl}
                       controls
-                      autoPlay
                       loop
                       className="max-w-2xl mx-auto rounded-lg border border-gray-800"
                     />

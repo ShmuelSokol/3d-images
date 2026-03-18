@@ -1,0 +1,31 @@
+{
+  "skill_name": "3d-image-perf2",
+  "status": "complete",
+  "current_experiment": 1,
+  "baseline_score": 0.0,
+  "best_score": 100.0,
+  "experiments": [
+    {
+      "id": 0,
+      "score": 0,
+      "max_score": 4,
+      "pass_rate": 0.0,
+      "status": "baseline",
+      "description": "original — no changes"
+    },
+    {
+      "id": 1,
+      "score": 4,
+      "max_score": 4,
+      "pass_rate": 100.0,
+      "status": "keep",
+      "description": "Stream downloads, selective polling, React.memo thumbnails, remove video autoplay"
+    }
+  ],
+  "eval_breakdown": [
+    {"name": "Streaming Downloads", "pass_count": 1, "total": 1},
+    {"name": "Selective Polling", "pass_count": 1, "total": 1},
+    {"name": "Memoized Thumbnails", "pass_count": 1, "total": 1},
+    {"name": "Video Autoplay Control", "pass_count": 1, "total": 1}
+  ]
+}
