@@ -133,11 +133,11 @@ export async function processVideoJob(
 
     // Reassemble 3 videos with original audio
     console.log(`[video] Reassembling 3 videos`);
-    const ffmpegBase = (inDir: string, outPath: string) =>
-      `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outPath}"`;
-    execSync(ffmpegBase(outAnaglyph, anaglyphPath), { stdio: "pipe" });
-    execSync(ffmpegBase(outStereo, stereoPath), { stdio: "pipe" });
-    execSync(ffmpegBase(outSbs, sbsPath), { stdio: "pipe" });
+    const ffmpegBase = (inDir: string, outPath: string, crf = 23) =>
+      `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf ${crf} -shortest -movflags +faststart "${outPath}"`;
+    execSync(ffmpegBase(outAnaglyph, anaglyphPath, 23), { stdio: "pipe" });
+    execSync(ffmpegBase(outStereo, stereoPath, 28), { stdio: "pipe" });
+    execSync(ffmpegBase(outSbs, sbsPath, 23), { stdio: "pipe" });
 
     // Upload all 3
     const supabase = getSupabase();

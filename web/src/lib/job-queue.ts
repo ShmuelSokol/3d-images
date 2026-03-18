@@ -27,10 +27,10 @@ class JobQueue {
         const fresh = await prisma.image.findUnique({ where: { id: pending.id }, select: { status: true } });
         if (fresh?.status !== "pending") continue;
 
-        // Mark as processing
+        // Mark as processing with start time
         await prisma.image.update({
           where: { id: pending.id },
-          data: { status: "processing" },
+          data: { status: "processing", startedAt: new Date() },
         });
 
         // Process in a child process so the main server stays responsive

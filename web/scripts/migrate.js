@@ -46,6 +46,9 @@ async function main() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       UNIQUE("couponId", "userId")
     )`,
+    // Processing duration tracking (2026-03-18)
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "startedAt" TIMESTAMP(3)`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "processingMs" INT`,
     `CREATE TABLE IF NOT EXISTS td_payment (
       id TEXT PRIMARY KEY,
       "userId" TEXT NOT NULL REFERENCES td_user(id),

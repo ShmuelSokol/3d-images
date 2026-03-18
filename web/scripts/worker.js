@@ -153,38 +153,42 @@ async function main() {
 
           // Reassemble 3 videos
           console.log(`[worker] Reassembling 3 videos`);
-          const ffmpegCmd = (inDir, outPath) => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf 23 -shortest -movflags +faststart "${outPath}"`;
-          execSync(ffmpegCmd(outAnaglyph, anaglyphPath), { stdio: "pipe" });
-          execSync(ffmpegCmd(outStereo, stereoPath), { stdio: "pipe" });
-          execSync(ffmpegCmd(outSbs, sbsPath), { stdio: "pipe" });
+          const ffmpegCmd = (inDir, outPath, crf = 23) => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf ${crf} -shortest -movflags +faststart "${outPath}"`;
+          execSync(ffmpegCmd(outAnaglyph, anaglyphPath, 23), { stdio: "pipe" });
+          execSync(ffmpegCmd(outStereo, stereoPath, 28), { stdio: "pipe" });
+          execSync(ffmpegCmd(outSbs, sbsPath, 23), { stdio: "pipe" });
 
-          // Upload all 3
+          // Upload all 3 — don't fail the whole job if one upload fails
           const uploadList = [
-            { local: anaglyphPath, remote: `videos/${jobId}-anaglyph.mp4` },
-            { local: stereoPath, remote: `videos/${jobId}-stereogram.mp4` },
-            { local: sbsPath, remote: `videos/${jobId}-sbs.mp4` },
+            { local: anaglyphPath, remote: `videos/${jobId}-anaglyph.mp4`, field: "videoUrl" },
+            { local: stereoPath, remote: `videos/${jobId}-stereogram.mp4`, field: "stereogramUrl" },
+            { local: sbsPath, remote: `videos/${jobId}-sbs.mp4`, field: "sbsUrl" },
           ];
-          const urls = {};
+          const updateData = { status: "done", framesDone: totalFrames };
           for (const u of uploadList) {
-            const buf = readFileSync(u.local);
-            const { error } = await supabase.storage.from("3d-images").upload(u.remote, buf, { contentType: "video/mp4", upsert: true });
-            if (error) throw new Error(`Upload failed (${u.remote}): ${error.message}`);
-            urls[u.remote] = supabase.storage.from("3d-images").getPublicUrl(u.remote).data.publicUrl;
+            try {
+              const buf = readFileSync(u.local);
+              console.log(`[worker] Uploading ${u.remote} (${(buf.length / 1024 / 1024).toFixed(1)}MB)`);
+              const { error } = await supabase.storage.from("3d-images").upload(u.remote, buf, { contentType: "video/mp4", upsert: true });
+              if (error) { console.error(`[worker] Upload failed (${u.remote}): ${error.message}`); continue; }
+              updateData[u.field] = supabase.storage.from("3d-images").getPublicUrl(u.remote).data.publicUrl;
+            } catch (uploadErr) {
+              console.error(`[worker] Upload error (${u.remote}):`, uploadErr.message);
+            }
           }
 
-          await prisma.image.update({
-            where: { id: jobId },
-            data: {
-              status: "done",
-              videoUrl: urls[`videos/${jobId}-anaglyph.mp4`],
-              stereogramUrl: urls[`videos/${jobId}-stereogram.mp4`],
-              sbsUrl: urls[`videos/${jobId}-sbs.mp4`],
-              framesDone: totalFrames,
-            },
-          });
+          if (!updateData.videoUrl && !updateData.stereogramUrl && !updateData.sbsUrl) {
+            throw new Error("All 3 video uploads failed");
+          }
+
+          await prisma.image.update({ where: { id: jobId }, data: updateData });
           console.log(`[worker] Video done: ${jobId}`);
-        } finally {
+          // Only clean up on success
           try { rmSync(jobDir, { recursive: true, force: true }); } catch {}
+        } catch (videoErr) {
+          // On error, keep temp files for debugging — log the path
+          console.error(`[worker] Video processing failed, temp files kept at: ${jobDir}`);
+          throw videoErr;
         }
       } else {
         // Image processing

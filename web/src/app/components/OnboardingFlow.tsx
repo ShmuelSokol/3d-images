@@ -363,7 +363,7 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
         </div>
 
         <p className="text-[10px] text-gray-600 text-center mt-3">
-          Yosemite Valley &middot; 50 seconds &middot; All 3 formats generated from a single upload
+          Niagara Falls &middot; 50 seconds &middot; All 3 formats generated from a single upload
         </p>
       </div>
 

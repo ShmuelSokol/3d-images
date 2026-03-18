@@ -45,6 +45,8 @@ model Image {
   duration    Float?
   frameCount  Int?
   framesDone  Int      @default(0)
+  startedAt    DateTime?
+  processingMs Int?
   sessionId   String?
   userId      String?
   user        User?    @relation(fields: [userId], references: [id])
