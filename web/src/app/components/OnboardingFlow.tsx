@@ -307,24 +307,7 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
       <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-8">
         <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Video Demo</p>
 
-        {/* Video tab switcher */}
-        <div className="flex justify-center gap-2 mb-4">
-          {VIDEO_OUTPUTS.map((v) => (
-            <button
-              key={v.key}
-              onClick={() => setVideoTab(v.key as typeof videoTab)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                videoTab === v.key
-                  ? "bg-gradient-to-r " + v.color + " text-white shadow-lg"
-                  : "bg-gray-800/60 text-gray-400 hover:text-gray-200 hover:bg-gray-800"
-              }`}
-            >
-              {v.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Side-by-side: original on left, output on right */}
+        {/* Side-by-side: original on left, 3D on right */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* Original video */}
           <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
@@ -341,11 +324,10 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
             </div>
           </div>
 
-          {/* Output video */}
+          {/* 3D Anaglyph video */}
           <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
             <video
-              key={videoTab}
-              src={VIDEO_DEMO[videoTab as keyof typeof VIDEO_DEMO]}
+              src={VIDEO_DEMO.anaglyph}
               autoPlay
               loop
               muted
@@ -353,17 +335,15 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
               className="w-full aspect-video object-cover"
             />
             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
-              {VIDEO_OUTPUTS.filter((v) => v.key === videoTab).map((v) => (
-                <span key={v.key} className={`text-xs font-semibold bg-gradient-to-r ${v.color} bg-clip-text text-transparent`}>
-                  {v.label}
-                </span>
-              ))}
+              <span className="text-xs font-semibold bg-gradient-to-r from-red-500 to-cyan-500 bg-clip-text text-transparent">
+                Anaglyph 3D
+              </span>
             </div>
           </div>
         </div>
 
         <p className="text-[10px] text-gray-600 text-center mt-3">
-          Niagara Falls &middot; 50 seconds &middot; All 3 formats generated from a single upload
+          Niagara Falls &middot; 50 seconds &middot; Upload any video and get 3D output
         </p>
       </div>
 
