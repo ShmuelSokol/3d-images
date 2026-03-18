@@ -43,6 +43,55 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
         </div>
       )}
 
+      {/* Results showcase — original + all outputs */}
+      <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-6">
+        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Example Results</p>
+
+        {/* Original — hero image */}
+        <div className="mb-4">
+          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={DEMO.original}
+              alt="Original photo — El Capitan, Yosemite"
+              loading="lazy"
+              className="w-full aspect-[16/9] object-cover"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+              <span className="text-xs font-semibold text-white/90">Original Photo</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Arrow */}
+        <div className="flex justify-center mb-4 text-gray-600">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+          </svg>
+        </div>
+
+        {/* All 5 outputs in a grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {OUTPUTS.map((fmt) => (
+            <div key={fmt.key} className="relative rounded-xl overflow-hidden border border-gray-700/50 group">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={DEMO[fmt.key as keyof typeof DEMO]}
+                alt={fmt.label}
+                loading="lazy"
+                className="w-full aspect-[16/10] object-cover"
+              />
+              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
+                <span className={`text-[11px] font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
+                  {fmt.label}
+                </span>
+                <span className="text-[9px] text-white/40 ml-1.5 hidden sm:inline">{fmt.desc}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* How it works — 3 steps */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-8">
         {/* Step 1 */}
@@ -91,55 +140,6 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
           <p className="text-xs text-gray-500 leading-relaxed">
             Anaglyph 3D, depth map, color map, Magic Eye, side-by-side &amp; more.
           </p>
-        </div>
-      </div>
-
-      {/* Results showcase — original + all outputs */}
-      <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-6">
-        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Example Results</p>
-
-        {/* Original — hero image */}
-        <div className="mb-4">
-          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={DEMO.original}
-              alt="Original photo — El Capitan, Yosemite"
-              loading="lazy"
-              className="w-full aspect-[16/9] object-cover"
-            />
-            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
-              <span className="text-xs font-semibold text-white/90">Original Photo</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Arrow */}
-        <div className="flex justify-center mb-4 text-gray-600">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
-          </svg>
-        </div>
-
-        {/* All 5 outputs in a grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {OUTPUTS.map((fmt) => (
-            <div key={fmt.key} className="relative rounded-xl overflow-hidden border border-gray-700/50 group">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={DEMO[fmt.key as keyof typeof DEMO]}
-                alt={fmt.label}
-                loading="lazy"
-                className="w-full aspect-[16/10] object-cover"
-              />
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
-                <span className={`text-[11px] font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
-                  {fmt.label}
-                </span>
-                <span className="text-[9px] text-white/40 ml-1.5 hidden sm:inline">{fmt.desc}</span>
-              </div>
-            </div>
-          ))}
         </div>
       </div>
 
