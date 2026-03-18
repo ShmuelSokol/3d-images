@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
 const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
@@ -15,11 +15,17 @@ const DEMO = {
 };
 
 const OUTPUTS = [
-  { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500" },
-  { key: "depth", label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white" },
-  { key: "colormap", label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500" },
-  { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500" },
-  { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
+  { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500", wide: false },
+  { key: "depth", label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white", wide: false },
+  { key: "colormap", label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false },
+  { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false },
+  { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
+];
+
+// Build a flat gallery of all demo images for lightbox navigation
+const MAIN_GALLERY = [
+  { url: DEMO.original, label: "Original Photo" },
+  ...OUTPUTS.map((o) => ({ url: DEMO[o.key as keyof typeof DEMO], label: o.label })),
 ];
 
 // Additional examples with all output types
@@ -33,11 +39,17 @@ const MORE_EXAMPLES = EX_IDS.map((ex) => ({
   label: ex.label,
   original: `${BASE}/originals/${ex.orig}`,
   outputs: [
-    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", color: "from-red-500 to-cyan-500" },
-    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", color: "from-green-500 to-purple-500" },
-    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", color: "from-cyan-500 to-blue-500" },
+    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", color: "from-red-500 to-cyan-500", wide: false },
+    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", color: "from-green-500 to-purple-500", wide: false },
+    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", color: "from-cyan-500 to-blue-500", wide: true },
   ],
 }));
+
+// Build galleries for each "more example"
+const MORE_GALLERIES = MORE_EXAMPLES.map((ex) => [
+  { url: ex.original, label: `${ex.label} — Original` },
+  ...ex.outputs.map((o) => ({ url: o.url, label: `${ex.label} — ${o.label}` })),
+]);
 
 interface OnboardingFlowProps {
   onGetStarted: () => void;
@@ -45,32 +57,93 @@ interface OnboardingFlowProps {
 }
 
 export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlowProps) {
-  const [lightbox, setLightbox] = useState<{ url: string; label: string } | null>(null);
+  const [gallery, setGallery] = useState<{ items: { url: string; label: string }[]; index: number } | null>(null);
+
+  const openGallery = useCallback((items: { url: string; label: string }[], index: number) => {
+    setGallery({ items, index });
+  }, []);
+
+  const goNext = useCallback(() => {
+    setGallery((g) => g ? { ...g, index: (g.index + 1) % g.items.length } : null);
+  }, []);
+
+  const goPrev = useCallback(() => {
+    setGallery((g) => g ? { ...g, index: (g.index - 1 + g.items.length) % g.items.length } : null);
+  }, []);
+
+  // Keyboard navigation
+  useEffect(() => {
+    if (!gallery) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight") goNext();
+      else if (e.key === "ArrowLeft") goPrev();
+      else if (e.key === "Escape") setGallery(null);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [gallery, goNext, goPrev]);
+
+  const current = gallery ? gallery.items[gallery.index] : null;
 
   return (
     <div className="mb-8 sm:mb-10 animate-fade-in">
-      {/* Lightbox */}
-      {lightbox && (
+      {/* Lightbox gallery */}
+      {gallery && current && (
         <div
-          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-pointer"
-          onClick={() => setLightbox(null)}
+          className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4"
+          onClick={() => setGallery(null)}
         >
+          {/* Close */}
           <button
             className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors z-10"
-            onClick={() => setLightbox(null)}
+            onClick={() => setGallery(null)}
           >
             <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
-          <div className="max-w-5xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
+
+          {/* Prev arrow */}
+          {gallery.items.length > 1 && (
+            <button
+              className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
+              onClick={(e) => { e.stopPropagation(); goPrev(); }}
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
+              </svg>
+            </button>
+          )}
+
+          {/* Image */}
+          <div className="max-w-6xl max-h-[85vh] w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={lightbox.url}
-              alt={lightbox.label}
-              className="w-full h-full object-contain rounded-lg"
+              key={current.url}
+              src={current.url}
+              alt={current.label}
+              className="max-w-full max-h-[85vh] object-contain rounded-lg"
             />
-            <p className="text-center text-sm text-gray-400 mt-2">{lightbox.label}</p>
+          </div>
+
+          {/* Next arrow */}
+          {gallery.items.length > 1 && (
+            <button
+              className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors z-10"
+              onClick={(e) => { e.stopPropagation(); goNext(); }}
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+              </svg>
+            </button>
+          )}
+
+          {/* Label + counter */}
+          <div className="mt-3 text-center" onClick={(e) => e.stopPropagation()}>
+            <p className="text-sm text-gray-300">{current.label}</p>
+            {gallery.items.length > 1 && (
+              <p className="text-[10px] text-gray-500 mt-1">{gallery.index + 1} / {gallery.items.length} &middot; Arrow keys to navigate</p>
+            )}
           </div>
         </div>
       )}
@@ -98,7 +171,7 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
         <div className="mb-4">
           <div
             className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
-            onClick={() => setLightbox({ url: DEMO.original, label: "Original Photo" })}
+            onClick={() => openGallery(MAIN_GALLERY, 0)}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -110,11 +183,6 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
               <span className="text-xs font-semibold text-white/90">Original Photo</span>
             </div>
-            <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <svg className="w-8 h-8 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
-              </svg>
-            </div>
           </div>
         </div>
 
@@ -125,31 +193,26 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
           </svg>
         </div>
 
-        {/* All 5 outputs in a grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {OUTPUTS.map((fmt) => (
+        {/* All 5 outputs in a grid — SBS spans full width */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {OUTPUTS.map((fmt, i) => (
             <div
               key={fmt.key}
-              className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
-              onClick={() => setLightbox({ url: DEMO[fmt.key as keyof typeof DEMO], label: fmt.label })}
+              className={`relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group ${fmt.wide ? "col-span-2 sm:col-span-4" : ""}`}
+              onClick={() => openGallery(MAIN_GALLERY, i + 1)}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={DEMO[fmt.key as keyof typeof DEMO]}
                 alt={fmt.label}
                 loading="lazy"
-                className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300"
+                className={`w-full ${fmt.wide ? "aspect-auto object-contain bg-black/50" : "aspect-[16/10] object-cover"} group-hover:scale-[1.01] transition-transform duration-300`}
               />
               <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
                 <span className={`text-[11px] font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
                   {fmt.label}
                 </span>
                 <span className="text-[9px] text-white/40 ml-1.5 hidden sm:inline">{fmt.desc}</span>
-              </div>
-              <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <svg className="w-6 h-6 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
-                </svg>
               </div>
             </div>
           ))}
@@ -227,14 +290,14 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
       <div className="mb-8">
         <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">More Examples</p>
         <div className="space-y-6">
-          {MORE_EXAMPLES.map((ex) => (
+          {MORE_EXAMPLES.map((ex, exIdx) => (
             <div key={ex.label}>
               <p className="text-[11px] text-gray-400 font-medium mb-2">{ex.label}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {/* Original */}
                 <div
                   className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
-                  onClick={() => setLightbox({ url: ex.original, label: `${ex.label} — Original` })}
+                  onClick={() => openGallery(MORE_GALLERIES[exIdx], 0)}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img src={ex.original} alt={`${ex.label} — Original`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
@@ -243,14 +306,19 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
                   </div>
                 </div>
                 {/* Outputs */}
-                {ex.outputs.map((out) => (
+                {ex.outputs.map((out, outIdx) => (
                   <div
                     key={out.label}
-                    className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
-                    onClick={() => setLightbox({ url: out.url, label: `${ex.label} — ${out.label}` })}
+                    className={`relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group ${out.wide ? "col-span-2 sm:col-span-3" : ""}`}
+                    onClick={() => openGallery(MORE_GALLERIES[exIdx], outIdx + 1)}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={out.url} alt={`${ex.label} — ${out.label}`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+                    <img
+                      src={out.url}
+                      alt={`${ex.label} — ${out.label}`}
+                      loading="lazy"
+                      className={`w-full ${out.wide ? "aspect-auto object-contain bg-black/50" : "aspect-[16/10] object-cover"} group-hover:scale-[1.01] transition-transform duration-300`}
+                    />
                     <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1">
                       <span className={`text-[10px] font-semibold bg-gradient-to-r ${out.color} bg-clip-text text-transparent`}>{out.label}</span>
                     </div>
