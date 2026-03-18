@@ -22,24 +22,22 @@ const OUTPUTS = [
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
 ];
 
-// Additional examples: original → anaglyph pairs
-const MORE_EXAMPLES = [
-  {
-    label: "Vernal Fall & Rainbow",
-    original: `${BASE}/originals/1773742159582-4itnjyhj0w6.jpeg`,
-    anaglyph: `${BASE}/anaglyph/cmmugaa000015hw68b9jx7jrq-anaglyph.png`,
-  },
-  {
-    label: "Yosemite Valley Sunset",
-    original: `${BASE}/originals/1773742163001-yjr1ihnh3g.jpeg`,
-    anaglyph: `${BASE}/anaglyph/cmmugacm7001bhw68xb6mkz34-anaglyph.png`,
-  },
-  {
-    label: "Merced River",
-    original: `${BASE}/originals/1773742152987-ok99or8nboi.jpeg`,
-    anaglyph: `${BASE}/anaglyph/cmmuga4w7000thw68kq8rvuy3-anaglyph.png`,
-  },
+// Additional examples with all output types
+const EX_IDS = [
+  { id: "cmmugaa000015hw68b9jx7jrq", label: "Vernal Fall & Rainbow", orig: "1773742159582-4itnjyhj0w6.jpeg" },
+  { id: "cmmugacm7001bhw68xb6mkz34", label: "Yosemite Valley Sunset", orig: "1773742163001-yjr1ihnh3g.jpeg" },
+  { id: "cmmuga4w7000thw68kq8rvuy3", label: "Merced River", orig: "1773742152987-ok99or8nboi.jpeg" },
 ];
+
+const MORE_EXAMPLES = EX_IDS.map((ex) => ({
+  label: ex.label,
+  original: `${BASE}/originals/${ex.orig}`,
+  outputs: [
+    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", color: "from-red-500 to-cyan-500" },
+    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", color: "from-green-500 to-purple-500" },
+    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", color: "from-cyan-500 to-blue-500" },
+  ],
+}));
 
 interface OnboardingFlowProps {
   onGetStarted: () => void;
@@ -225,31 +223,39 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
         </div>
       </div>
 
-      {/* More examples — original → anaglyph pairs */}
+      {/* More examples — original + all outputs */}
       <div className="mb-8">
         <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">More Examples</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="space-y-6">
           {MORE_EXAMPLES.map((ex) => (
-            <div key={ex.label} className="space-y-2">
-              <div
-                className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
-                onClick={() => setLightbox({ url: ex.original, label: `${ex.label} — Original` })}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={ex.original} alt={`${ex.label} — Original`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
-                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
-                  <span className="text-[10px] text-white/80 font-medium">{ex.label}</span>
+            <div key={ex.label}>
+              <p className="text-[11px] text-gray-400 font-medium mb-2">{ex.label}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {/* Original */}
+                <div
+                  className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
+                  onClick={() => setLightbox({ url: ex.original, label: `${ex.label} — Original` })}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={ex.original} alt={`${ex.label} — Original`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+                  <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1">
+                    <span className="text-[10px] text-white/80 font-medium">Original</span>
+                  </div>
                 </div>
-              </div>
-              <div
-                className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
-                onClick={() => setLightbox({ url: ex.anaglyph, label: `${ex.label} — Anaglyph 3D` })}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={ex.anaglyph} alt={`${ex.label} — Anaglyph`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
-                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
-                  <span className="text-[10px] font-semibold bg-gradient-to-r from-red-500 to-cyan-500 bg-clip-text text-transparent">Anaglyph 3D</span>
-                </div>
+                {/* Outputs */}
+                {ex.outputs.map((out) => (
+                  <div
+                    key={out.label}
+                    className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
+                    onClick={() => setLightbox({ url: out.url, label: `${ex.label} — ${out.label}` })}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={out.url} alt={`${ex.label} — ${out.label}`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1">
+                      <span className={`text-[10px] font-semibold bg-gradient-to-r ${out.color} bg-clip-text text-transparent`}>{out.label}</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           ))}
