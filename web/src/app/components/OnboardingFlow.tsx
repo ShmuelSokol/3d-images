@@ -1,15 +1,17 @@
 "use client";
 
-const JOB_ID = "cmmukn84k0001100wlhq1jqy7";
+import { useState } from "react";
+
 const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
+const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
 
 const DEMO = {
   original: `${BASE}/originals/1773749482004-6vqotz14l2.jpeg`,
-  anaglyph: `${BASE}/anaglyph/${JOB_ID}-anaglyph.png`,
-  depth: `${BASE}/depth/${JOB_ID}-depth.png`,
-  colormap: `${BASE}/distance/${JOB_ID}-distance.png`,
-  stereogram: `${BASE}/stereogram/${JOB_ID}-stereogram.png`,
-  sbs: `${BASE}/sbs/${JOB_ID}-sbs.png`,
+  anaglyph: `${BASE}/anaglyph/${MAIN_ID}-anaglyph.png`,
+  depth: `${BASE}/depth/${MAIN_ID}-depth.png`,
+  colormap: `${BASE}/distance/${MAIN_ID}-distance.png`,
+  stereogram: `${BASE}/stereogram/${MAIN_ID}-stereogram.png`,
+  sbs: `${BASE}/sbs/${MAIN_ID}-sbs.png`,
 };
 
 const OUTPUTS = [
@@ -20,14 +22,61 @@ const OUTPUTS = [
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
 ];
 
+// Additional examples: original → anaglyph pairs
+const MORE_EXAMPLES = [
+  {
+    label: "Vernal Fall & Rainbow",
+    original: `${BASE}/originals/1773742159582-4itnjyhj0w6.jpeg`,
+    anaglyph: `${BASE}/anaglyph/cmmugaa000015hw68b9jx7jrq-anaglyph.png`,
+  },
+  {
+    label: "Yosemite Valley Sunset",
+    original: `${BASE}/originals/1773742163001-yjr1ihnh3g.jpeg`,
+    anaglyph: `${BASE}/anaglyph/cmmugacm7001bhw68xb6mkz34-anaglyph.png`,
+  },
+  {
+    label: "Merced River",
+    original: `${BASE}/originals/1773742152987-ok99or8nboi.jpeg`,
+    anaglyph: `${BASE}/anaglyph/cmmuga4w7000thw68kq8rvuy3-anaglyph.png`,
+  },
+];
+
 interface OnboardingFlowProps {
   onGetStarted: () => void;
   onClose?: () => void;
 }
 
 export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlowProps) {
+  const [lightbox, setLightbox] = useState<{ url: string; label: string } | null>(null);
+
   return (
     <div className="mb-8 sm:mb-10 animate-fade-in">
+      {/* Lightbox */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-pointer"
+          onClick={() => setLightbox(null)}
+        >
+          <button
+            className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors z-10"
+            onClick={() => setLightbox(null)}
+          >
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+          <div className="max-w-5xl max-h-[90vh] w-full" onClick={(e) => e.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={lightbox.url}
+              alt={lightbox.label}
+              className="w-full h-full object-contain rounded-lg"
+            />
+            <p className="text-center text-sm text-gray-400 mt-2">{lightbox.label}</p>
+          </div>
+        </div>
+      )}
+
       {/* Close button for returning users */}
       {onClose && (
         <div className="flex justify-end mb-2">
@@ -49,16 +98,24 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
 
         {/* Original — hero image */}
         <div className="mb-4">
-          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+          <div
+            className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
+            onClick={() => setLightbox({ url: DEMO.original, label: "Original Photo" })}
+          >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={DEMO.original}
               alt="Original photo — El Capitan, Yosemite"
               loading="lazy"
-              className="w-full aspect-[16/9] object-cover"
+              className="w-full aspect-[16/9] object-cover group-hover:scale-[1.02] transition-transform duration-300"
             />
             <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
               <span className="text-xs font-semibold text-white/90">Original Photo</span>
+            </div>
+            <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <svg className="w-8 h-8 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+              </svg>
             </div>
           </div>
         </div>
@@ -73,19 +130,28 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
         {/* All 5 outputs in a grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {OUTPUTS.map((fmt) => (
-            <div key={fmt.key} className="relative rounded-xl overflow-hidden border border-gray-700/50 group">
+            <div
+              key={fmt.key}
+              className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
+              onClick={() => setLightbox({ url: DEMO[fmt.key as keyof typeof DEMO], label: fmt.label })}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={DEMO[fmt.key as keyof typeof DEMO]}
                 alt={fmt.label}
                 loading="lazy"
-                className="w-full aspect-[16/10] object-cover"
+                className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300"
               />
               <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
                 <span className={`text-[11px] font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
                   {fmt.label}
                 </span>
                 <span className="text-[9px] text-white/40 ml-1.5 hidden sm:inline">{fmt.desc}</span>
+              </div>
+              <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <svg className="w-6 h-6 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607zM10.5 7.5v6m3-3h-6" />
+                </svg>
               </div>
             </div>
           ))}
@@ -140,6 +206,53 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
           <p className="text-xs text-gray-500 leading-relaxed">
             Anaglyph 3D, depth map, color map, Magic Eye, side-by-side &amp; more.
           </p>
+        </div>
+      </div>
+
+      {/* Features note */}
+      <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 mb-8 text-xs text-gray-500">
+        <div className="flex items-center gap-1.5">
+          <svg className="w-4 h-4 text-cyan-500/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6h9.75M10.5 6a1.5 1.5 0 11-3 0m3 0a1.5 1.5 0 10-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m-9.75 0h9.75" />
+          </svg>
+          Adjustable depth intensity
+        </div>
+        <div className="flex items-center gap-1.5">
+          <svg className="w-4 h-4 text-purple-500/70" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5" />
+          </svg>
+          Video support (paid)
+        </div>
+      </div>
+
+      {/* More examples — original → anaglyph pairs */}
+      <div className="mb-8">
+        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">More Examples</p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          {MORE_EXAMPLES.map((ex) => (
+            <div key={ex.label} className="space-y-2">
+              <div
+                className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
+                onClick={() => setLightbox({ url: ex.original, label: `${ex.label} — Original` })}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={ex.original} alt={`${ex.label} — Original`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
+                  <span className="text-[10px] text-white/80 font-medium">{ex.label}</span>
+                </div>
+              </div>
+              <div
+                className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
+                onClick={() => setLightbox({ url: ex.anaglyph, label: `${ex.label} — Anaglyph 3D` })}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={ex.anaglyph} alt={`${ex.label} — Anaglyph`} loading="lazy" className="w-full aspect-[16/10] object-cover group-hover:scale-[1.02] transition-transform duration-300" />
+                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
+                  <span className="text-[10px] font-semibold bg-gradient-to-r from-red-500 to-cyan-500 bg-clip-text text-transparent">Anaglyph 3D</span>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
