@@ -46,7 +46,12 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
-  const [tab, setTab] = useState<"generator" | "overview" | "users" | "activity">("generator");
+  const [tab, setTab] = useState<"generator" | "overview" | "users" | "activity" | "coupons">("generator");
+  const [coupons, setCoupons] = useState<{ id: string; code: string; credits: number; maxRedemptions: number; timesRedeemed: number; expiresAt: string | null; createdAt: string; redemptions: { id: string; createdAt: string; user: { email: string } }[] }[]>([]);
+  const [newCouponCode, setNewCouponCode] = useState("");
+  const [newCouponCredits, setNewCouponCredits] = useState(100);
+  const [newCouponMax, setNewCouponMax] = useState(1);
+  const [couponError, setCouponError] = useState("");
 
   // Check auth
   useEffect(() => {
@@ -72,6 +77,21 @@ export default function AdminPage() {
       setStatsError(`Network error: ${(err as Error).message}`);
     }
   }, []);
+
+  const loadCoupons = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/coupons");
+      if (res.ok) {
+        const d = await res.json();
+        if (Array.isArray(d)) setCoupons(d);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // Load coupons when switching to coupons tab
+  useEffect(() => {
+    if (tab === "coupons" && authed) loadCoupons();
+  }, [tab, authed, loadCoupons]);
 
   useEffect(() => {
     if (authed && tab !== "generator") loadStats();
@@ -165,7 +185,7 @@ export default function AdminPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-gray-900 rounded-lg p-1 w-fit">
-          {(["generator", "overview", "users", "activity"] as const).map((t) => (
+          {(["generator", "overview", "users", "activity", "coupons"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -185,18 +205,18 @@ export default function AdminPage() {
           </Suspense>
         )}
 
-        {/* Admin Tabs */}
-        {tab !== "generator" && !stats && (
+        {/* Admin Tabs (need stats) */}
+        {tab !== "generator" && tab !== "coupons" && !stats && (
           <div>
             <p className="text-gray-500">Loading stats...</p>
             {statsError && <p className="text-red-400 text-sm mt-2">{statsError}</p>}
           </div>
         )}
 
-        {tab !== "generator" && stats && (
+        {tab !== "generator" && (stats || tab === "coupons") && (
           <>
             {/* Overview Tab */}
-            {tab === "overview" && (
+            {tab === "overview" && stats && (
               <div className="space-y-6">
                 {/* Stat cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -320,7 +340,7 @@ export default function AdminPage() {
             )}
 
             {/* Users Tab */}
-            {tab === "users" && (
+            {tab === "users" && stats && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
                 <table className="w-full text-sm">
                   <thead>
@@ -356,7 +376,7 @@ export default function AdminPage() {
             )}
 
             {/* Activity Tab */}
-            {tab === "activity" && (
+            {tab === "activity" && stats && (
               <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
@@ -407,8 +427,118 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
+
+            {/* Coupons Tab */}
+            {tab === "coupons" && (
+              <div className="space-y-6">
+                {/* Create coupon */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                  <h3 className="text-lg font-semibold mb-4">Create Coupon</h3>
+                  <div className="flex flex-wrap gap-3 items-end">
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Code</label>
+                      <input
+                        type="text"
+                        value={newCouponCode}
+                        onChange={(e) => setNewCouponCode(e.target.value.toUpperCase())}
+                        placeholder="e.g. WELCOME100"
+                        className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-600 w-44"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Credits</label>
+                      <input
+                        type="number"
+                        value={newCouponCredits}
+                        onChange={(e) => setNewCouponCredits(parseInt(e.target.value) || 100)}
+                        className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 w-24"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 mb-1">Max Uses</label>
+                      <input
+                        type="number"
+                        value={newCouponMax}
+                        onChange={(e) => setNewCouponMax(parseInt(e.target.value) || 1)}
+                        className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 w-24"
+                      />
+                    </div>
+                    <button
+                      onClick={async () => {
+                        setCouponError("");
+                        try {
+                          const res = await fetch("/api/admin/coupons", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ code: newCouponCode, credits: newCouponCredits, maxRedemptions: newCouponMax }),
+                          });
+                          if (!res.ok) {
+                            const d = await res.json();
+                            setCouponError(d.error || "Failed");
+                            return;
+                          }
+                          setNewCouponCode("");
+                          loadCoupons();
+                        } catch { setCouponError("Network error"); }
+                      }}
+                      disabled={!newCouponCode.trim()}
+                      className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      Create
+                    </button>
+                  </div>
+                  {couponError && <p className="text-red-400 text-xs mt-2">{couponError}</p>}
+                </div>
+
+                {/* Coupon list */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-800 text-left text-gray-500">
+                          <th className="px-4 py-3 font-medium">Code</th>
+                          <th className="px-4 py-3 font-medium">Credits</th>
+                          <th className="px-4 py-3 font-medium">Used / Max</th>
+                          <th className="px-4 py-3 font-medium">Redeemed By</th>
+                          <th className="px-4 py-3 font-medium">Created</th>
+                          <th className="px-4 py-3 font-medium"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {coupons.map((c) => (
+                          <tr key={c.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                            <td className="px-4 py-3 font-mono text-cyan-400">{c.code}</td>
+                            <td className="px-4 py-3 text-gray-300">{c.credits}</td>
+                            <td className="px-4 py-3 text-gray-400">{c.timesRedeemed} / {c.maxRedemptions}</td>
+                            <td className="px-4 py-3 text-gray-500 text-xs">
+                              {c.redemptions.map(r => r.user.email).join(", ") || "—"}
+                            </td>
+                            <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{formatDate(c.createdAt)}</td>
+                            <td className="px-4 py-3">
+                              <button
+                                onClick={async () => {
+                                  await fetch(`/api/admin/coupons?id=${c.id}`, { method: "DELETE" });
+                                  setCoupons(prev => prev.filter(x => x.id !== c.id));
+                                }}
+                                className="text-xs text-red-500 hover:text-red-400 transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                        {coupons.length === 0 && (
+                          <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600">No coupons yet</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
+
       </div>
     </div>
   );

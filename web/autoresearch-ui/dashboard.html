@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autoresearch Dashboard — 3D Image UI</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f0f0f; color: #e0e0e0; padding: 24px; }
+  .header { text-align: center; margin-bottom: 32px; }
+  .header h1 { font-size: 24px; font-weight: 700; background: linear-gradient(90deg, #22d3ee, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .header .status { margin-top: 8px; font-size: 14px; color: #9ca3af; }
+  .header .status.running { color: #22d3ee; }
+  .header .status.complete { color: #4ade80; }
+  .stats { display: flex; gap: 16px; justify-content: center; margin-bottom: 32px; flex-wrap: wrap; }
+  .stat { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 16px 24px; text-align: center; min-width: 140px; }
+  .stat .value { font-size: 28px; font-weight: 700; color: #22d3ee; }
+  .stat .label { font-size: 12px; color: #9ca3af; margin-top: 4px; }
+  .chart-container { background: #1a1a2e; border: 1px solid #2a2a4a; border-radius: 12px; padding: 20px; margin-bottom: 24px; max-width: 700px; margin-left: auto; margin-right: auto; }
+  .chart-container h2 { font-size: 14px; color: #9ca3af; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  th { text-align: left; padding: 10px 12px; font-size: 12px; color: #9ca3af; border-bottom: 1px solid #2a2a4a; }
+  td { padding: 10px 12px; font-size: 13px; border-bottom: 1px solid #1a1a2e; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 600; }
+  .badge.baseline { background: #1e40af20; color: #60a5fa; }
+  .badge.keep { background: #16a34a20; color: #4ade80; }
+  .badge.discard { background: #dc262620; color: #f87171; }
+  .eval-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .eval-bar .name { width: 160px; font-size: 12px; color: #d1d5db; }
+  .eval-bar .bar-bg { flex: 1; height: 20px; background: #1a1a2e; border-radius: 4px; overflow: hidden; }
+  .eval-bar .bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+  .eval-bar .pct { width: 40px; text-align: right; font-size: 12px; color: #9ca3af; font-variant-numeric: tabular-nums; }
+  .section { max-width: 700px; margin: 0 auto 24px; }
+  .section h2 { font-size: 14px; color: #9ca3af; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Autoresearch: 3D Image UI</h1>
+  <div class="status" id="status">Loading...</div>
+</div>
+<div class="stats" id="stats"></div>
+<div class="chart-container"><h2>Score Progression</h2><canvas id="chart"></canvas></div>
+<div class="section"><h2>Experiments</h2><table id="experiments"><thead><tr><th>#</th><th>Score</th><th>Pass Rate</th><th>Status</th><th>Description</th></tr></thead><tbody></tbody></table></div>
+<div class="section"><h2>Eval Breakdown</h2><div id="evals"></div></div>
+
+<script>
+let chart = null;
+async function refresh() {
+  try {
+    const res = await fetch('results.json?' + Date.now());
+    const data = await res.json();
+    // Status
+    const statusEl = document.getElementById('status');
+    if (data.status === 'running') {
+      statusEl.textContent = `Running experiment ${data.current_experiment}...`;
+      statusEl.className = 'status running';
+    } else {
+      statusEl.textContent = 'Complete';
+      statusEl.className = 'status complete';
+    }
+    // Stats
+    const statsEl = document.getElementById('stats');
+    statsEl.innerHTML = `
+      <div class="stat"><div class="value">${data.baseline_score.toFixed(0)}%</div><div class="label">Baseline</div></div>
+      <div class="stat"><div class="value" style="color:#4ade80">${data.best_score.toFixed(0)}%</div><div class="label">Best Score</div></div>
+      <div class="stat"><div class="value">${data.experiments.length}</div><div class="label">Experiments</div></div>
+      <div class="stat"><div class="value">${data.experiments.filter(e=>e.status==='keep').length}</div><div class="label">Kept</div></div>
+    `;
+    // Chart
+    const labels = data.experiments.map(e => `#${e.id}`);
+    const scores = data.experiments.map(e => e.pass_rate);
+    const colors = data.experiments.map(e => e.status === 'baseline' ? '#60a5fa' : e.status === 'keep' ? '#4ade80' : '#f87171');
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById('chart'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Pass Rate %',
+          data: scores,
+          borderColor: '#22d3ee',
+          backgroundColor: '#22d3ee20',
+          fill: true,
+          tension: 0.3,
+          pointBackgroundColor: colors,
+          pointRadius: 6,
+          pointBorderWidth: 2,
+          pointBorderColor: '#0f0f0f'
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          y: { min: 0, max: 100, grid: { color: '#2a2a4a' }, ticks: { color: '#9ca3af' } },
+          x: { grid: { color: '#1a1a2e' }, ticks: { color: '#9ca3af' } }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+    // Table
+    const tbody = document.querySelector('#experiments tbody');
+    tbody.innerHTML = data.experiments.map(e => `
+      <tr>
+        <td>${e.id}</td>
+        <td>${e.score}/${e.max_score}</td>
+        <td>${e.pass_rate.toFixed(1)}%</td>
+        <td><span class="badge ${e.status}">${e.status}</span></td>
+        <td>${e.description}</td>
+      </tr>
+    `).join('');
+    // Evals
+    const evalsEl = document.getElementById('evals');
+    evalsEl.innerHTML = data.eval_breakdown.map(ev => {
+      const pct = ev.total > 0 ? (ev.pass_count / ev.total * 100) : 0;
+      const color = pct >= 80 ? '#4ade80' : pct >= 50 ? '#facc15' : '#f87171';
+      return `<div class="eval-bar">
+        <div class="name">${ev.name}</div>
+        <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+        <div class="pct">${ev.pass_count}/${ev.total}</div>
+      </div>`;
+    }).join('');
+  } catch(e) { console.error(e); }
+}
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

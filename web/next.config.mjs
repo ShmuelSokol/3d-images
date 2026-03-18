@@ -9,6 +9,7 @@ const nextConfig = {
       "sharp",
       "bcryptjs",
       "jsonwebtoken",
+      "stripe",
     ],
   },
   async headers() {

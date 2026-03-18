@@ -12,11 +12,14 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
-  images    Image[]
+  id           String   @id @default(cuid())
+  email        String   @unique
+  password     String
+  imageCredits Int      @default(50)
+  createdAt    DateTime @default(now())
+  images       Image[]
+  couponRedemptions CouponRedemption[]
+  payments     Payment[]
 
   @@map("td_user")
 }
@@ -49,4 +52,42 @@ model Image {
   updatedAt   DateTime @updatedAt
 
   @@map("td_image")
+}
+
+model Coupon {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  credits        Int      @default(100)
+  maxRedemptions Int      @default(1)
+  timesRedeemed  Int      @default(0)
+  expiresAt      DateTime?
+  createdAt      DateTime @default(now())
+  redemptions    CouponRedemption[]
+
+  @@map("td_coupon")
+}
+
+model CouponRedemption {
+  id        String   @id @default(cuid())
+  couponId  String
+  userId    String
+  coupon    Coupon   @relation(fields: [couponId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([couponId, userId])
+  @@map("td_coupon_redemption")
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  userId          String
+  stripeSessionId String   @unique
+  amount          Int
+  credits         Int
+  status          String   @default("pending")
+  user            User     @relation(fields: [userId], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@map("td_payment")
 }

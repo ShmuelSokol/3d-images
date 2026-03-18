@@ -1,0 +1,33 @@
+{
+  "skill_name": "3d-image-credits",
+  "status": "complete",
+  "current_experiment": 1,
+  "baseline_score": 0.0,
+  "best_score": 100.0,
+  "experiments": [
+    {
+      "id": 0,
+      "score": 0,
+      "max_score": 6,
+      "pass_rate": 0.0,
+      "status": "baseline",
+      "description": "original — no usage limits, no credits, no payments, no coupons"
+    },
+    {
+      "id": 1,
+      "score": 6,
+      "max_score": 6,
+      "pass_rate": 100.0,
+      "status": "keep",
+      "description": "Full credits system: anonymous limits, user credits, Stripe checkout, coupon codes, admin management, usage UI"
+    }
+  ],
+  "eval_breakdown": [
+    {"name": "Anonymous Usage Limits", "pass_count": 1, "total": 1},
+    {"name": "Credit System", "pass_count": 1, "total": 1},
+    {"name": "Stripe Payment", "pass_count": 1, "total": 1},
+    {"name": "Coupon System", "pass_count": 1, "total": 1},
+    {"name": "Admin Coupon Management", "pass_count": 1, "total": 1},
+    {"name": "Usage UI", "pass_count": 1, "total": 1}
+  ]
+}

@@ -28,6 +28,33 @@ async function main() {
     END $$`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "stereogramUrl" TEXT`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "sbsUrl" TEXT`,
+    // Credits & payments (2026-03-18)
+    `ALTER TABLE td_user ADD COLUMN IF NOT EXISTS "imageCredits" INT NOT NULL DEFAULT 50`,
+    `CREATE TABLE IF NOT EXISTS td_coupon (
+      id TEXT PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      credits INT NOT NULL DEFAULT 100,
+      "maxRedemptions" INT NOT NULL DEFAULT 1,
+      "timesRedeemed" INT NOT NULL DEFAULT 0,
+      "expiresAt" TIMESTAMP(3),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS td_coupon_redemption (
+      id TEXT PRIMARY KEY,
+      "couponId" TEXT NOT NULL REFERENCES td_coupon(id),
+      "userId" TEXT NOT NULL REFERENCES td_user(id),
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE("couponId", "userId")
+    )`,
+    `CREATE TABLE IF NOT EXISTS td_payment (
+      id TEXT PRIMARY KEY,
+      "userId" TEXT NOT NULL REFERENCES td_user(id),
+      "stripeSessionId" TEXT UNIQUE NOT NULL,
+      amount INT NOT NULL,
+      credits INT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
   ];
 
   for (const sql of statements) {

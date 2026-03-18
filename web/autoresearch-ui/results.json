@@ -1,0 +1,33 @@
+{
+  "skill_name": "3d-image-ui",
+  "status": "complete",
+  "current_experiment": 1,
+  "baseline_score": 33.3,
+  "best_score": 100.0,
+  "experiments": [
+    {
+      "id": 0,
+      "score": 2,
+      "max_score": 6,
+      "pass_rate": 33.3,
+      "status": "baseline",
+      "description": "original UI \u2014 no changes"
+    },
+    {
+      "id": 1,
+      "score": 6,
+      "max_score": 6,
+      "pass_rate": 100.0,
+      "status": "keep",
+      "description": "visual hierarchy + mobile responsive + interactive states + compare slider"
+    }
+  ],
+  "eval_breakdown": [
+    {"name": "Visual Hierarchy", "pass_count": 1, "total": 2},
+    {"name": "First-Time Clarity", "pass_count": 2, "total": 2},
+    {"name": "Mobile Responsive", "pass_count": 1, "total": 2},
+    {"name": "Interactive States", "pass_count": 1, "total": 2},
+    {"name": "Visual Design", "pass_count": 2, "total": 2},
+    {"name": "Before/After Compare", "pass_count": 1, "total": 2}
+  ]
+}

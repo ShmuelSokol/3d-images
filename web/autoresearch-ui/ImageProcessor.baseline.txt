@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense, memo } from "react";
+import { useState, useRef, useCallback, useEffect, lazy, Suspense } from "react";
 
 const DepthEditor = lazy(() => import("./DepthEditor"));
-const CompareSlider = lazy(() => import("./CompareSlider"));
 
 // ── Types ──
 
@@ -31,79 +30,6 @@ interface Job {
   createdAt: string;
 }
 
-// ── Memoized thumbnail ──
-
-interface JobThumbProps {
-  job: Job;
-  isSelected: boolean;
-  isChecked: boolean;
-  selectMode: boolean;
-  onClick: () => void;
-}
-
-const JobThumbnail = memo(function JobThumbnail({ job, isSelected, isChecked, selectMode, onClick }: JobThumbProps) {
-  const isVideo = job.mediaType === "video";
-  const pct =
-    isVideo && job.status === "processing" && job.frameCount && job.frameCount > 0
-      ? Math.round((job.framesDone / job.frameCount) * 100)
-      : null;
-
-  return (
-    <button
-      onClick={onClick}
-      className={`relative flex-shrink-0 w-20 h-20 lg:w-full lg:h-auto lg:aspect-square
-                 rounded-lg overflow-hidden border-2 transition-all duration-150
-                 ${isSelected && !selectMode ? "border-cyan-500 ring-1 ring-cyan-500/30" : isChecked ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
-    >
-      {/* Thumbnail */}
-      {job.anaglyphUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={job.anaglyphUrl} alt="" loading="lazy" width={80} height={80} className="w-full h-full object-cover" />
-      ) : !isVideo && job.originalUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={job.originalUrl} alt="" loading="lazy" width={80} height={80} className="w-full h-full object-cover" />
-      ) : (
-        <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">
-          {isVideo ? "\uD83C\uDFAC" : "\uD83D\uDCF7"}
-        </div>
-      )}
-
-      {/* Top badges */}
-      <div className="absolute top-0.5 left-0.5 flex gap-0.5">
-        {isVideo && (
-          <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">VID</div>
-        )}
-        <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-cyan-300">{job.intensity}</div>
-      </div>
-
-      {/* Progress overlay */}
-      {pct !== null && (
-        <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-          <span className="text-xs font-bold text-cyan-400 tabular-nums">{pct}%</span>
-        </div>
-      )}
-
-      {/* Select checkbox */}
-      {selectMode && (
-        <div className="absolute top-0.5 right-0.5">
-          <div className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] ${isChecked ? "bg-cyan-500 border-cyan-500 text-white" : "border-white/70 bg-black/40"}`}>
-            {isChecked && "\u2713"}
-          </div>
-        </div>
-      )}
-
-      {/* Status badge */}
-      <div className="absolute bottom-0.5 right-0.5">
-        {job.status === "done" && !selectMode && <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />}
-        {job.status === "error" && <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />}
-        {job.status === "pending" && <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />}
-        {job.status === "processing" && pct === null && <span className="block w-2.5 h-2.5 bg-cyan-400 rounded-full animate-pulse shadow" />}
-        {job.status === "cancelled" && <span className="block w-2.5 h-2.5 bg-gray-500 rounded-full shadow" />}
-      </div>
-    </button>
-  );
-});
-
 // ── Component ──
 
 export default function ImageProcessor() {
@@ -130,17 +56,11 @@ export default function ImageProcessor() {
   const [activeTab, setActiveTab] = useState<string>("anaglyph");
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
-  const [compareMode, setCompareMode] = useState(false);
-  const [creditInfo, setCreditInfo] = useState<{ type: string; credits: number | null; used?: number; limit?: number | null; remaining?: number } | null>(null);
-  const [couponCode, setCouponCode] = useState("");
-  const [couponMsg, setCouponMsg] = useState("");
-  const [couponError, setCouponError] = useState("");
-  const [showUpgrade, setShowUpgrade] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Polling ──
-  const fetchAllJobs = useCallback(async () => {
+  const fetchJobs = useCallback(async () => {
     try {
       const res = await fetch("/api/jobs");
       if (res.ok) {
@@ -152,70 +72,35 @@ export default function ImageProcessor() {
     }
   }, []);
 
-  // Poll a single job by ID and merge into state
-  const fetchSingleJob = useCallback(async (id: string) => {
-    try {
-      const res = await fetch(`/api/jobs/${id}`);
-      if (res.ok) {
-        const job = await res.json();
-        setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
-      }
-    } catch {
-      /* ignore poll errors */
-    }
-  }, []);
-
-  const fetchCredits = useCallback(async () => {
-    try {
-      const res = await fetch("/api/credits");
-      if (res.ok) setCreditInfo(await res.json());
-    } catch { /* ignore */ }
-  }, []);
-
   // Check auth state on mount
   useEffect(() => {
     fetch("/api/auth")
       .then((r) => r.json())
       .then((d) => { if (d.user) setUser(d.user); })
       .catch(() => {});
-    fetchCredits();
-  }, [fetchCredits]);
+  }, []);
 
   useEffect(() => {
-    fetchAllJobs();
-  }, [fetchAllJobs]);
+    fetchJobs();
+  }, [fetchJobs]);
 
-  const hasActiveRef = useRef(false);
-  const pollModeRef = useRef<string | null>(null);
   useEffect(() => {
+    // Poll every 3s if there are active jobs, otherwise every 30s
     const hasActive = jobs.some(
       (j) => j.status === "pending" || j.status === "processing"
     );
-    // Selective polling: if a single job is selected and active, poll just that job
-    const selectedIsActive = selectedId && jobs.find(
-      (j) => j.id === selectedId && (j.status === "pending" || j.status === "processing")
-    );
-    const pollMode = selectedIsActive ? selectedId : hasActive ? "all" : "idle";
-
-    if (pollMode === pollModeRef.current && pollRef.current) return;
-    pollModeRef.current = pollMode;
-    hasActiveRef.current = hasActive;
-
     const interval = hasActive ? 3000 : 30000;
-    const pollFn = selectedIsActive
-      ? () => fetchSingleJob(selectedId!)
-      : fetchAllJobs;
 
     if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(pollFn, interval);
+    pollRef.current = setInterval(fetchJobs, interval);
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [jobs, selectedId, fetchAllJobs, fetchSingleJob]);
+  }, [jobs, fetchJobs]);
 
   // ── Upload ──
-  const handleFiles = useCallback(async (files: FileList | File[]) => {
+  async function handleFiles(files: FileList | File[]) {
     setUploading(true);
     try {
       for (const f of Array.from(files)) {
@@ -229,30 +114,30 @@ export default function ImageProcessor() {
         if (res.ok) {
           const job = await res.json();
           setJobs((prev) => [job, ...prev]);
-          setSelectedId((prev) => prev ?? job.id);
-        } else if (res.status === 403) {
-          const data = await res.json();
-          setShowUpgrade(true);
-          alert(data.error || "Usage limit reached");
-          break;
+          if (!selectedId) setSelectedId(job.id);
         }
       }
     } catch (err) {
       console.error("Upload failed:", err);
     } finally {
       setUploading(false);
-      fetchCredits();
     }
-  }, [intensity, colorMode, fillOcclusion, fetchCredits]);
+  }
 
-  const handleDelete = useCallback((id: string) => {
+  async function handleDelete(id: string) {
     setJobs((prev) => prev.filter((j) => j.id !== id));
-    setSelectedId((prev) => prev === id ? null : prev);
-    fetch(`/api/jobs/${id}`, { method: "DELETE" }).catch(() => {});
-  }, []);
+    if (selectedId === id) {
+      setSelectedId(null);
+    }
+    try {
+      await fetch(`/api/jobs/${id}`, { method: "DELETE" });
+    } catch {
+      /* ignore */
+    }
+  }
 
   // ── Cancel ──
-  const handleCancel = useCallback(async (id: string) => {
+  async function handleCancel(id: string) {
     try {
       await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -265,7 +150,7 @@ export default function ImageProcessor() {
     } catch {
       /* ignore */
     }
-  }, []);
+  }
 
   // ── Auth ──
   async function handleAuth(action: "login" | "register") {
@@ -286,8 +171,7 @@ export default function ImageProcessor() {
       setShowAuth(false);
       setAuthEmail("");
       setAuthPassword("");
-      fetchAllJobs();
-      fetchCredits();
+      fetchJobs(); // Refresh to show user's jobs
     } catch {
       setAuthError("Network error");
     } finally {
@@ -302,57 +186,20 @@ export default function ImageProcessor() {
       body: JSON.stringify({ action: "logout" }),
     });
     setUser(null);
-    fetchAllJobs();
-    fetchCredits();
-  }
-
-  async function handleRedeemCoupon() {
-    setCouponMsg("");
-    setCouponError("");
-    try {
-      const res = await fetch("/api/coupons/redeem", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: couponCode }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setCouponError(data.error || "Failed");
-        return;
-      }
-      setCouponMsg(data.message);
-      setCouponCode("");
-      fetchCredits();
-    } catch {
-      setCouponError("Network error");
-    }
-  }
-
-  async function handleBuyCredits() {
-    try {
-      const res = await fetch("/api/checkout", { method: "POST" });
-      const data = await res.json();
-      if (data.url) {
-        window.location.href = data.url;
-      } else {
-        alert(data.error || "Checkout failed");
-      }
-    } catch {
-      alert("Checkout failed");
-    }
+    fetchJobs(); // Refresh to show session jobs only
   }
 
   // ── Multi-select ──
-  const toggleSelect = useCallback((id: string) => {
+  function toggleSelect(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  }, []);
+  }
 
-  const handleDownloadSelected = useCallback(async () => {
+  async function handleDownloadSelected() {
     const ids = Array.from(selectedIds).filter((id) => {
       const j = jobs.find((job) => job.id === id);
       return j && j.status === "done" && (j.anaglyphUrl || j.videoUrl);
@@ -386,28 +233,10 @@ export default function ImageProcessor() {
       setSelectMode(false);
     } catch { /* ignore */ }
     finally { setDownloading(false); }
-  }, [selectedIds, jobs, downloadStyle]);
-
-  // ── Download (cross-origin safe) ──
-  const handleDownload = useCallback(async (url: string, filename: string) => {
-    try {
-      const res = await fetch(url);
-      const blob = await res.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
-    } catch {
-      window.open(url, "_blank");
-    }
-  }, []);
+  }
 
   // ── Save to Photos (Web Share API) ──
-  const handleSaveToPhotos = useCallback(async (url: string, fileName: string) => {
+  async function handleSaveToPhotos(url: string, fileName: string) {
     try {
       const res = await fetch(url);
       const blob = await res.blob();
@@ -423,10 +252,10 @@ export default function ImageProcessor() {
       // User cancelled share or not supported — fallback
       handleDownload(url, fileName);
     }
-  }, [handleDownload]);
+  }
 
   // ── Retry ──
-  const handleRetry = useCallback(async (id: string) => {
+  async function handleRetry(id: string) {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -438,10 +267,10 @@ export default function ImageProcessor() {
         setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
       }
     } catch { /* ignore */ }
-  }, []);
+  }
 
   // ── Reprocess with new settings ──
-  const handleReprocess = useCallback(async (id: string, settings: { intensity?: number; colorMode?: string; fillOcclusion?: boolean }) => {
+  async function handleReprocess(id: string, settings: { intensity?: number; colorMode?: string; fillOcclusion?: boolean }) {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -454,10 +283,10 @@ export default function ImageProcessor() {
         setAdjustIntensity(null);
       }
     } catch { /* ignore */ }
-  }, []);
+  }
 
   // ── Rotate ──
-  const handleRotate = useCallback(async (id: string, angle: number) => {
+  async function handleRotate(id: string, angle: number) {
     try {
       const res = await fetch(`/api/jobs/${id}`, {
         method: "PATCH",
@@ -472,10 +301,29 @@ export default function ImageProcessor() {
     } catch {
       /* ignore */
     }
-  }, []);
+  }
+
+  // ── Download (cross-origin safe) ──
+  async function handleDownload(url: string, filename: string) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Fallback: open in new tab
+      window.open(url, "_blank");
+    }
+  }
 
   // Reset adjusters when switching images
-  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); setActiveTab("anaglyph"); setCompareMode(false); }, [selectedId]);
+  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); setActiveTab("anaglyph"); }, [selectedId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -505,35 +353,23 @@ export default function ImageProcessor() {
     return () => window.removeEventListener("keydown", handleKey);
   }, [jobs, selectedId]);
 
-  // ── Derived (memoized) ──
-  const selected = useMemo(() => jobs.find((j) => j.id === selectedId) ?? null, [jobs, selectedId]);
-  const activeCount = useMemo(() => jobs.filter(
+  // ── Derived ──
+  const selected = jobs.find((j) => j.id === selectedId) ?? null;
+  const activeCount = jobs.filter(
     (j) => j.status === "pending" || j.status === "processing"
-  ).length, [jobs]);
+  ).length;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-10">
+    <div className="max-w-7xl mx-auto p-4 sm:p-8">
       {/* Header */}
-      <header className="mb-8 sm:mb-10">
-        <div className="flex items-center justify-between mb-3">
-          <div className="w-24" />
-          <div className="text-center">
-            <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
-              3D Image Generator
-            </h1>
-            <p className="text-gray-500 text-xs sm:text-sm mt-1.5">
-              Upload photos or videos &rarr; AI depth estimation &rarr; 6 output formats
-            </p>
-          </div>
-          <div className="w-auto min-w-[6rem] text-right">
+      <header className="mb-5">
+        <div className="flex items-center justify-between mb-1">
+          <div />
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">3D Image Generator</h1>
+          <div className="text-right">
             {user ? (
-              <div className="flex items-center gap-2 text-xs justify-end flex-wrap">
-                {creditInfo?.type === "user" && (
-                  <span className="text-cyan-400 font-medium tabular-nums">
-                    {creditInfo.credits} credits
-                  </span>
-                )}
-                <span className="text-gray-500 hidden sm:inline">{user.email}</span>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-400">{user.email}</span>
                 <button
                   onClick={handleLogout}
                   className="text-gray-500 hover:text-gray-300 transition-colors"
@@ -542,22 +378,19 @@ export default function ImageProcessor() {
                 </button>
               </div>
             ) : (
-              <div className="flex items-center gap-2 text-xs justify-end">
-                {creditInfo?.type === "anonymous" && (
-                  <span className="text-gray-500 tabular-nums">
-                    {creditInfo.remaining}/{creditInfo.limit} free
-                  </span>
-                )}
-                <button
-                  onClick={() => setShowAuth(!showAuth)}
-                  className="text-gray-600 hover:text-gray-400 transition-colors"
-                >
-                  Log in
-                </button>
-              </div>
+              <button
+                onClick={() => setShowAuth(!showAuth)}
+                className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                Log in to save history
+              </button>
             )}
           </div>
         </div>
+        <p className="text-gray-400 text-sm text-center">
+          Upload photos or videos &rarr; server-side AI depth &rarr; anaglyph
+          3D
+        </p>
         {showAuth && !user && (
           <div className="max-w-xs mx-auto mt-3 bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
             <input
@@ -594,108 +427,58 @@ export default function ImageProcessor() {
             </div>
           </div>
         )}
-        {/* Credits / Upgrade / Coupon panel */}
-        {user && (showUpgrade || (creditInfo?.type === "user" && creditInfo.credits !== null && creditInfo.credits <= 5)) && (
-          <div className="max-w-sm mx-auto mt-3 bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
-            <p className="text-sm text-gray-300 text-center">
-              {creditInfo?.credits === 0 ? "You're out of credits!" : `Only ${creditInfo?.credits} credits left!`}
-            </p>
-            <button
-              onClick={handleBuyCredits}
-              className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 rounded-lg text-sm font-medium transition-all"
-            >
-              Buy 100 Credits — $20
-            </button>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Coupon code"
-                value={couponCode}
-                onChange={(e) => setCouponCode(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleRedeemCoupon()}
-                className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500"
-              />
-              <button
-                onClick={handleRedeemCoupon}
-                disabled={!couponCode.trim()}
-                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
-              >
-                Redeem
-              </button>
-            </div>
-            {couponMsg && <p className="text-green-400 text-xs text-center">{couponMsg}</p>}
-            {couponError && <p className="text-red-400 text-xs text-center">{couponError}</p>}
-            <button
-              onClick={() => setShowUpgrade(false)}
-              className="w-full text-xs text-gray-600 hover:text-gray-400 transition-colors"
-            >
-              Dismiss
-            </button>
-          </div>
-        )}
-        {/* Anonymous upgrade prompt */}
-        {!user && creditInfo?.type === "anonymous" && creditInfo.remaining === 0 && (
-          <div className="max-w-sm mx-auto mt-3 bg-gray-900 border border-yellow-700/50 rounded-xl p-4 space-y-2 text-center">
-            <p className="text-sm text-yellow-300">Free limit reached (20 images)</p>
-            <p className="text-xs text-gray-400">Sign up for 50 free credits + ability to buy more</p>
-            <button
-              onClick={() => setShowAuth(true)}
-              className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors"
-            >
-              Create Free Account
-            </button>
-          </div>
-        )}
       </header>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40">
-        <div className="flex items-center gap-2 text-xs">
-          <span className="font-medium text-gray-400">Intensity</span>
+      <div className="flex flex-wrap items-center gap-4 mb-5 bg-gray-900/50 backdrop-blur-sm rounded-xl px-4 py-3 border border-gray-800/50">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <span className="font-medium text-gray-300">Intensity</span>
           <input
             type="range"
             min="1"
             max="40"
             value={intensity}
             onChange={(e) => setIntensity(parseInt(e.target.value))}
-            className="w-20 sm:w-28 accent-cyan-500 h-1.5"
+            className="w-28 accent-cyan-500 h-1.5"
           />
-          <span className="text-cyan-400 tabular-nums w-5 text-right font-mono text-xs">
+          <span className="text-cyan-400 tabular-nums w-5 text-right font-mono">
             {intensity}
           </span>
         </div>
 
-        <div className="hidden sm:block w-px h-5 bg-gray-700/50" />
+        <div className="w-px h-5 bg-gray-700" />
 
-        <div className="flex items-center gap-2 text-xs">
-          <span className="font-medium text-gray-400">Color</span>
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <span className="font-medium text-gray-300">Color</span>
           <select
             value={colorMode}
             onChange={(e) => setColorMode(e.target.value)}
-            className="bg-gray-800 border border-gray-700/50 rounded-lg px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/30 focus:outline-none transition-all"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:outline-none transition-colors"
           >
-            <option value="dubois">Dubois</option>
-            <option value="classic">Classic</option>
+            <option value="dubois">Dubois (better color)</option>
+            <option value="classic">Classic red/cyan</option>
           </select>
         </div>
 
-        <label className="flex items-center gap-1.5 text-xs cursor-pointer group">
+        <div className="w-px h-5 bg-gray-700" />
+
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer group">
           <input
             type="checkbox"
             checked={fillOcclusion}
             onChange={(e) => setFillOcclusion(e.target.checked)}
-            className="accent-cyan-500 rounded"
+            className="accent-cyan-500"
           />
-          <span className="text-gray-400 group-hover:text-gray-300 transition-colors">Fill gaps</span>
+          <span className="font-medium text-gray-300 group-hover:text-gray-200 transition-colors">Fill gaps</span>
         </label>
 
-        <div className="flex-1 min-w-0" />
+        <div className="flex-1" />
 
         {activeCount > 0 && (
-          <div className="flex items-center gap-2 bg-cyan-500/10 rounded-full px-3 py-1">
-            <div className="w-2.5 h-2.5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-[11px] text-cyan-400 font-medium whitespace-nowrap">
-              {activeCount} processing
+          <div className="flex items-center gap-2 bg-cyan-500/10 rounded-lg px-3 py-1.5">
+            <div className="w-3 h-3 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-xs text-cyan-400 font-medium">
+              {activeCount} job{activeCount > 1 ? "s" : ""} processing
             </span>
           </div>
         )}
@@ -716,7 +499,7 @@ export default function ImageProcessor() {
                    ${isDragging
                      ? "border-cyan-400 bg-cyan-500/10 scale-[1.01] shadow-lg shadow-cyan-500/10"
                      : "hover:border-cyan-500 hover:bg-gray-900/50"}
-                   ${jobs.length === 0 ? "p-10 sm:p-16 border-gray-600" : "p-4 border-gray-700"}`}
+                   ${jobs.length === 0 ? "p-14 border-gray-600" : "p-4 border-gray-700"}`}
       >
         {uploading ? (
           <div className="flex items-center justify-center gap-3">
@@ -754,9 +537,9 @@ export default function ImageProcessor() {
 
       {/* Main */}
       {jobs.length > 0 && (
-        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
+        <div className="flex flex-col lg:flex-row gap-5">
           {/* Sidebar */}
-          <div className="lg:w-44 flex-shrink-0">
+          <div className="lg:w-48 flex-shrink-0">
             {/* Select mode toggle + download button */}
             <div className="flex items-center gap-2 mb-2">
               <button
@@ -789,16 +572,97 @@ export default function ImageProcessor() {
               )}
             </div>
             <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-y-auto lg:max-h-[75vh] pb-2 lg:pb-0">
-            {jobs.map((job) => (
-              <JobThumbnail
-                key={job.id}
-                job={job}
-                isSelected={selectedId === job.id}
-                isChecked={selectedIds.has(job.id)}
-                selectMode={selectMode}
-                onClick={() => { if (selectMode) { toggleSelect(job.id); } else { setSelectedId(job.id); } }}
-              />
-            ))}
+            {jobs.map((job) => {
+              const isVideo = job.mediaType === "video";
+              const pct =
+                isVideo &&
+                job.status === "processing" &&
+                job.frameCount &&
+                job.frameCount > 0
+                  ? Math.round((job.framesDone / job.frameCount) * 100)
+                  : null;
+
+              return (
+                <button
+                  key={job.id}
+                  onClick={() => { if (selectMode) { toggleSelect(job.id); } else { setSelectedId(job.id); } }}
+                  className={`relative flex-shrink-0 w-20 h-20 lg:w-full lg:h-auto lg:aspect-square
+                             rounded-lg overflow-hidden border-2 transition-all duration-150
+                             ${selectedId === job.id && !selectMode ? "border-cyan-500 ring-1 ring-cyan-500/30" : selectedIds.has(job.id) ? "border-cyan-500 ring-1 ring-cyan-500/30" : "border-gray-700 hover:border-gray-500"}`}
+                >
+                  {/* Thumbnail */}
+                  {job.anaglyphUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={job.anaglyphUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
+                  ) : !isVideo && job.originalUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={job.originalUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-800 flex items-center justify-center text-xl">
+                      {isVideo ? "🎬" : "📷"}
+                    </div>
+                  )}
+
+                  {/* Top badges */}
+                  <div className="absolute top-0.5 left-0.5 flex gap-0.5">
+                    {isVideo && (
+                      <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-white">
+                        VID
+                      </div>
+                    )}
+                    <div className="bg-black/60 rounded px-1 py-0.5 text-[9px] text-cyan-300">
+                      {job.intensity}
+                    </div>
+                  </div>
+
+                  {/* Progress overlay */}
+                  {pct !== null && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                      <span className="text-xs font-bold text-cyan-400 tabular-nums">
+                        {pct}%
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Select checkbox */}
+                  {selectMode && (
+                    <div className="absolute top-0.5 right-0.5">
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] ${selectedIds.has(job.id) ? "bg-cyan-500 border-cyan-500 text-white" : "border-white/70 bg-black/40"}`}>
+                        {selectedIds.has(job.id) && "✓"}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Status badge */}
+                  <div className="absolute bottom-0.5 right-0.5">
+                    {job.status === "done" && !selectMode && (
+                      <span className="block w-2.5 h-2.5 bg-green-500 rounded-full shadow" />
+                    )}
+                    {job.status === "error" && (
+                      <span className="block w-2.5 h-2.5 bg-red-500 rounded-full shadow" />
+                    )}
+                    {job.status === "pending" && (
+                      <span className="block w-2.5 h-2.5 bg-yellow-400 rounded-full animate-pulse shadow" />
+                    )}
+                    {job.status === "processing" && pct === null && (
+                      <span className="block w-2.5 h-2.5 bg-cyan-400 rounded-full animate-pulse shadow" />
+                    )}
+                    {job.status === "cancelled" && (
+                      <span className="block w-2.5 h-2.5 bg-gray-500 rounded-full shadow" />
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
           </div>
 
@@ -903,7 +767,7 @@ export default function ImageProcessor() {
                         jobId={selected.id}
                         depthMapUrl={selected.depthMapUrl}
                         originalUrl={selected.originalUrl}
-                        onSave={() => { setEditingDepth(false); fetchAllJobs(); }}
+                        onSave={() => { setEditingDepth(false); fetchJobs(); }}
                         onClose={() => setEditingDepth(false)}
                       />
                     </Suspense>
@@ -912,101 +776,69 @@ export default function ImageProcessor() {
                   {/* Output tabs */}
                   {(() => {
                     const tabs = [
-                      { id: "anaglyph", label: "3D", labelFull: "Anaglyph 3D", url: selected.anaglyphUrl },
-                      { id: "original", label: "Orig", labelFull: "Original", url: selected.originalUrl },
-                      { id: "depth", label: "Depth", labelFull: "Depth Map", url: selected.depthMapUrl },
-                      { id: "colormap", label: "Color", labelFull: "Color Map", url: selected.distanceMapUrl },
-                      { id: "stereogram", label: "Eye", labelFull: "Magic Eye", url: selected.stereogramUrl },
-                      { id: "sbs", label: "SBS", labelFull: "Side-by-Side", url: selected.sbsUrl },
+                      { id: "anaglyph", label: "Anaglyph 3D", url: selected.anaglyphUrl },
+                      { id: "original", label: "Original", url: selected.originalUrl },
+                      { id: "depth", label: "Depth Map", url: selected.depthMapUrl },
+                      { id: "colormap", label: "Color Map", url: selected.distanceMapUrl },
+                      { id: "stereogram", label: "Magic Eye", url: selected.stereogramUrl },
+                      { id: "sbs", label: "Side-by-Side", url: selected.sbsUrl },
                     ];
                     const current = tabs.find(t => t.id === activeTab) || tabs[0];
                     const baseName = selected.fileName.replace(/\.[^.]+$/, "");
-                    const canCompare = compareMode && current.id !== "original" && current.url && selected.originalUrl;
                     return (
                       <div>
-                        {/* Tab bar + compare toggle */}
-                        <div className="flex items-center gap-2 mb-3">
-                          <div className="flex gap-1 overflow-x-auto scrollbar-hide flex-1">
-                            {tabs.map(tab => (
-                              <button
-                                key={tab.id}
-                                onClick={() => setActiveTab(tab.id)}
-                                className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all
-                                  ${activeTab === tab.id
-                                    ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
-                                    : tab.url
-                                      ? "bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 active:scale-95"
-                                      : "bg-gray-800/30 text-gray-600 cursor-not-allowed"}`}
-                                disabled={!tab.url && tab.id !== "original"}
-                                title={tab.labelFull}
-                              >
-                                <span className="sm:hidden">{tab.label}</span>
-                                <span className="hidden sm:inline">{tab.labelFull}</span>
-                              </button>
-                            ))}
-                          </div>
-                          {/* Compare toggle */}
-                          {activeTab !== "original" && current.url && (
+                        {/* Tab bar */}
+                        <div className="flex gap-1 overflow-x-auto pb-2 mb-3 scrollbar-hide">
+                          {tabs.map(tab => (
                             <button
-                              onClick={() => setCompareMode(!compareMode)}
-                              className={`px-2.5 py-1.5 rounded-lg text-[11px] sm:text-xs font-medium whitespace-nowrap transition-all flex-shrink-0
-                                ${compareMode
-                                  ? "bg-purple-600 text-white shadow-lg shadow-purple-500/20"
-                                  : "bg-gray-800/80 text-gray-400 hover:text-gray-200 hover:bg-gray-700 active:scale-95"}`}
+                              key={tab.id}
+                              onClick={() => setActiveTab(tab.id)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all
+                                ${activeTab === tab.id
+                                  ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
+                                  : tab.url
+                                    ? "bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+                                    : "bg-gray-800/50 text-gray-600 cursor-not-allowed"}`}
+                              disabled={!tab.url && tab.id !== "original"}
                             >
-                              Compare
+                              {tab.label}
+                              {!tab.url && tab.id !== "original" && " --"}
                             </button>
-                          )}
+                          ))}
                         </div>
-                        {/* Active image or compare slider */}
+                        {/* Active image */}
                         <div className="relative group">
-                          {canCompare ? (
-                            <Suspense fallback={<div className="w-full aspect-video bg-gray-800/50 rounded-xl animate-pulse" />}>
-                              <CompareSlider
-                                beforeUrl={selected.originalUrl}
-                                afterUrl={current.url!}
-                                beforeLabel="Original"
-                                afterLabel={current.labelFull}
-                              />
-                            </Suspense>
-                          ) : current.url ? (
+                          {current.url ? (
                             <>
                               {/* eslint-disable-next-line @next/next/no-img-element */}
                               <img
                                 src={current.url}
-                                alt={current.labelFull}
-                                loading="lazy"
-                                decoding="async"
-                                className="w-full rounded-xl border border-gray-800/50 cursor-zoom-in transition-all hover:border-gray-700"
+                                alt={current.label}
+                                className="w-full rounded-xl border border-gray-800 cursor-zoom-in transition-transform"
                                 onClick={() => setLightboxUrl(current.url)}
                               />
                               {/* Overlay actions */}
-                              <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                                <span className="text-[10px] text-white/60 bg-black/40 backdrop-blur-sm rounded px-2 py-0.5 pointer-events-none">
-                                  Click to expand
-                                </span>
-                                <div className="flex gap-1.5 pointer-events-auto">
-                                  {current.id !== "original" && (
-                                    <>
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); handleDownload(current.url!, `${current.id}-${baseName}.png`); }}
-                                        className="px-3 py-1.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 active:scale-95 rounded-lg text-xs font-medium transition-all"
-                                      >
-                                        Download
-                                      </button>
-                                      <button
-                                        onClick={(e) => { e.stopPropagation(); handleSaveToPhotos(current.url!, `${current.id}-${baseName}.png`); }}
-                                        className="px-3 py-1.5 bg-black/60 backdrop-blur-sm hover:bg-black/80 active:scale-95 rounded-lg text-xs font-medium transition-all"
-                                      >
-                                        Share
-                                      </button>
-                                    </>
-                                  )}
-                                </div>
+                              <div className="absolute bottom-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                {current.id !== "original" && (
+                                  <>
+                                    <button
+                                      onClick={() => handleDownload(current.url!, `${current.id}-${baseName}.png`)}
+                                      className="px-3 py-1.5 bg-black/70 backdrop-blur-sm hover:bg-black/90 rounded-lg text-xs font-medium transition-colors"
+                                    >
+                                      Download
+                                    </button>
+                                    <button
+                                      onClick={() => handleSaveToPhotos(current.url!, `${current.id}-${baseName}.png`)}
+                                      className="px-3 py-1.5 bg-black/70 backdrop-blur-sm hover:bg-black/90 rounded-lg text-xs font-medium transition-colors"
+                                    >
+                                      Share
+                                    </button>
+                                  </>
+                                )}
                               </div>
                             </>
                           ) : (
-                            <div className="w-full aspect-video bg-gray-800/30 rounded-xl border border-dashed border-gray-700 flex items-center justify-center text-gray-500 text-sm">
+                            <div className="w-full aspect-video bg-gray-800/50 rounded-xl border border-gray-800 flex items-center justify-center text-gray-500 text-sm">
                               Reprocess to generate
                             </div>
                           )}
@@ -1096,9 +928,9 @@ export default function ImageProcessor() {
                   </div>
                   {selected.videoUrl && (
                     <video
-                      key={selected.id}
                       src={selected.videoUrl}
                       controls
+                      autoPlay
                       loop
                       className="max-w-2xl mx-auto rounded-lg border border-gray-800"
                     />

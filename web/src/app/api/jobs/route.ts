@@ -22,6 +22,37 @@ export async function POST(req: NextRequest) {
     const sessionId = getSessionId(req);
     const userId = getUserId(req);
 
+    // ── Usage limit check ──
+    if (userId) {
+      // Logged-in user: check credits
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { imageCredits: true },
+      });
+      if (!user || user.imageCredits <= 0) {
+        return NextResponse.json(
+          { error: "No credits remaining. Purchase more or redeem a coupon.", code: "NO_CREDITS" },
+          { status: 403 }
+        );
+      }
+      // Decrement credit atomically
+      await prisma.user.update({
+        where: { id: userId },
+        data: { imageCredits: { decrement: 1 } },
+      });
+    } else {
+      // Anonymous user: max 20 images
+      const count = await prisma.image.count({
+        where: { sessionId, userId: null },
+      });
+      if (count >= 20) {
+        return NextResponse.json(
+          { error: "Free limit reached (20 images). Sign up for 50 free credits!", code: "ANON_LIMIT" },
+          { status: 403 }
+        );
+      }
+    }
+
     // Upload original to Supabase Storage
     const supabase = getSupabase();
     const ext = file.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
