@@ -71,13 +71,13 @@ class JobQueue {
         resolve();
       });
 
-      // Timeout: if worker doesn't finish in 4 hours, kill it
+      // Timeout: if worker doesn't finish in 6 hours, kill it
       setTimeout(() => {
         if (!child.killed) {
           console.error(`[queue] Worker timeout for ${jobId}, killing`);
           child.kill("SIGKILL");
         }
-      }, 4 * 60 * 60 * 1000);
+      }, 6 * 60 * 60 * 1000);
     });
   }
 }
