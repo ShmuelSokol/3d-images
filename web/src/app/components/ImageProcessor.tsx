@@ -137,6 +137,7 @@ export default function ImageProcessor() {
   const [couponMsg, setCouponMsg] = useState("");
   const [couponError, setCouponError] = useState("");
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -517,7 +518,16 @@ export default function ImageProcessor() {
       {/* Header */}
       <header className="mb-8 sm:mb-10">
         <div className="flex items-center justify-between mb-3">
-          <div className="w-24" />
+          <div className="w-24">
+            {jobs.length > 0 && (
+              <button
+                onClick={() => setShowOnboarding((v) => !v)}
+                className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors whitespace-nowrap"
+              >
+                How it works
+              </button>
+            )}
+          </div>
           <div className="text-center">
             <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">
               3D Image Generator
@@ -650,7 +660,7 @@ export default function ImageProcessor() {
       </header>
 
       {/* Controls — hidden during onboarding */}
-      <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40 ${jobs.length === 0 && !uploading ? "hidden" : ""}`}>
+      <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40 ${(jobs.length === 0 && !uploading) || showOnboarding ? "hidden" : ""}`}>
         <div className="flex items-center gap-2 text-xs">
           <span className="font-medium text-gray-400">Intensity</span>
           <input
@@ -702,10 +712,13 @@ export default function ImageProcessor() {
         )}
       </div>
 
-      {/* Onboarding flow — shown only when no jobs */}
-      {jobs.length === 0 && !uploading && (
+      {/* Onboarding flow — shown for first-time users or when manually triggered */}
+      {((jobs.length === 0 && !uploading) || showOnboarding) && (
         <Suspense fallback={null}>
-          <OnboardingFlow onGetStarted={() => fileInputRef.current?.click()} />
+          <OnboardingFlow
+            onGetStarted={() => { setShowOnboarding(false); fileInputRef.current?.click(); }}
+            onClose={showOnboarding ? () => setShowOnboarding(false) : undefined}
+          />
         </Suspense>
       )}
 

@@ -1,37 +1,48 @@
 "use client";
 
-import { useState } from "react";
+const JOB_ID = "cmmukn84k0001100wlhq1jqy7";
+const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
 
-// Real processed demo images from Supabase
 const DEMO = {
-  original: "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/originals/1773805666776-9fqtqjuzzob.jpg",
-  anaglyph: "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/anaglyph/cmmvi3gmq0001i5oss7qldoax-anaglyph.png",
-  depth: "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/depth/cmmvi3gmq0001i5oss7qldoax-depth.png",
-  colormap: "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/distance/cmmvi3gmq0001i5oss7qldoax-distance.png",
-  stereogram: "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/stereogram/cmmvi3gmq0001i5oss7qldoax-stereogram.png",
-  sbs: "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/sbs/cmmvi3gmq0001i5oss7qldoax-sbs.png",
+  original: `${BASE}/originals/1773749482004-6vqotz14l2.jpeg`,
+  anaglyph: `${BASE}/anaglyph/${JOB_ID}-anaglyph.png`,
+  depth: `${BASE}/depth/${JOB_ID}-depth.png`,
+  colormap: `${BASE}/distance/${JOB_ID}-distance.png`,
+  stereogram: `${BASE}/stereogram/${JOB_ID}-stereogram.png`,
+  sbs: `${BASE}/sbs/${JOB_ID}-sbs.png`,
 };
 
-const FORMATS = [
+const OUTPUTS = [
   { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500" },
   { key: "depth", label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white" },
   { key: "colormap", label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500" },
   { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500" },
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
-  { key: "original", label: "Original", desc: "Untouched photo", color: "from-gray-500 to-gray-400" },
 ];
 
 interface OnboardingFlowProps {
   onGetStarted: () => void;
+  onClose?: () => void;
 }
 
-export default function OnboardingFlow({ onGetStarted }: OnboardingFlowProps) {
-  const [activeFormat, setActiveFormat] = useState(0);
-  const currentFormat = FORMATS[activeFormat];
-  const currentUrl = DEMO[currentFormat.key as keyof typeof DEMO];
-
+export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlowProps) {
   return (
     <div className="mb-8 sm:mb-10 animate-fade-in">
+      {/* Close button for returning users */}
+      {onClose && (
+        <div className="flex justify-end mb-2">
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-300 transition-colors text-xs flex items-center gap-1"
+          >
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Close
+          </button>
+        </div>
+      )}
+
       {/* How it works — 3 steps */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 mb-8">
         {/* Step 1 */}
@@ -83,69 +94,51 @@ export default function OnboardingFlow({ onGetStarted }: OnboardingFlowProps) {
         </div>
       </div>
 
-      {/* Live demo: before → after with format selector */}
+      {/* Results showcase — original + all outputs */}
       <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-6">
-        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Live Example</p>
+        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Example Results</p>
 
-        {/* Before / After row */}
-        <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 items-center mb-4">
-          {/* Original (small) */}
-          <div className="flex-shrink-0 w-full sm:w-36">
-            <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={DEMO.original}
-                alt="Original photo"
-                loading="lazy"
-                className="w-full aspect-square object-cover"
-              />
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1.5">
-                <span className="text-[10px] text-white/80 font-medium">Original</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Arrow */}
-          <div className="flex-shrink-0 text-gray-600">
-            <svg className="w-6 h-6 rotate-90 sm:rotate-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-            </svg>
-          </div>
-
-          {/* Output (large) */}
-          <div className="flex-1 min-w-0 w-full">
-            <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={currentUrl}
-                alt={currentFormat.label}
-                loading="lazy"
-                className="w-full aspect-[16/10] object-cover transition-opacity duration-300"
-              />
-              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
-                <span className={`text-xs font-semibold bg-gradient-to-r ${currentFormat.color} bg-clip-text text-transparent`}>
-                  {currentFormat.label}
-                </span>
-                <span className="text-[10px] text-white/50 ml-2">{currentFormat.desc}</span>
-              </div>
+        {/* Original — hero image */}
+        <div className="mb-4">
+          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={DEMO.original}
+              alt="Original photo — El Capitan, Yosemite"
+              loading="lazy"
+              className="w-full aspect-[16/9] object-cover"
+            />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+              <span className="text-xs font-semibold text-white/90">Original Photo</span>
             </div>
           </div>
         </div>
 
-        {/* Format selector pills */}
-        <div className="flex flex-wrap justify-center gap-1.5">
-          {FORMATS.map((fmt, i) => (
-            <button
-              key={fmt.key}
-              onClick={() => setActiveFormat(i)}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all
-                ${activeFormat === i
-                  ? "bg-white/10 text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-300 hover:bg-white/5"
-                }`}
-            >
-              {fmt.label}
-            </button>
+        {/* Arrow */}
+        <div className="flex justify-center mb-4 text-gray-600">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+          </svg>
+        </div>
+
+        {/* All 5 outputs in a grid */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {OUTPUTS.map((fmt) => (
+            <div key={fmt.key} className="relative rounded-xl overflow-hidden border border-gray-700/50 group">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={DEMO[fmt.key as keyof typeof DEMO]}
+                alt={fmt.label}
+                loading="lazy"
+                className="w-full aspect-[16/10] object-cover"
+              />
+              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
+                <span className={`text-[11px] font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
+                  {fmt.label}
+                </span>
+                <span className="text-[9px] text-white/40 ml-1.5 hidden sm:inline">{fmt.desc}</span>
+              </div>
+            </div>
           ))}
         </div>
       </div>
