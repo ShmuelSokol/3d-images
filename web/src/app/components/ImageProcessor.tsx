@@ -53,6 +53,9 @@ export default function ImageProcessor() {
   const [adjustFillOcclusion, setAdjustFillOcclusion] = useState<boolean | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadStyle, setDownloadStyle] = useState<string>("anaglyph");
+  const [activeTab, setActiveTab] = useState<string>("anaglyph");
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -320,7 +323,35 @@ export default function ImageProcessor() {
   }
 
   // Reset adjusters when switching images
-  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); }, [selectedId]);
+  useEffect(() => { setAdjustIntensity(null); setAdjustColorMode(null); setAdjustFillOcclusion(null); setEditingDepth(false); setActiveTab("anaglyph"); }, [selectedId]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const tabIds = ["anaglyph", "original", "depth", "colormap", "stereogram", "sbs"];
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
+      if (e.key === "Escape") { setLightboxUrl(null); return; }
+      // Arrow keys to navigate images
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const doneJobs = jobs.filter(j => j.status === "done");
+        if (doneJobs.length === 0) return;
+        const idx = doneJobs.findIndex(j => j.id === selectedId);
+        const next = e.key === "ArrowRight"
+          ? (idx + 1) % doneJobs.length
+          : (idx - 1 + doneJobs.length) % doneJobs.length;
+        setSelectedId(doneJobs[next].id);
+        return;
+      }
+      // Number keys for tabs
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 6) {
+        setActiveTab(tabIds[num - 1]);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [jobs, selectedId]);
 
   // ── Derived ──
   const selected = jobs.find((j) => j.id === selectedId) ?? null;
@@ -334,7 +365,7 @@ export default function ImageProcessor() {
       <header className="mb-5">
         <div className="flex items-center justify-between mb-1">
           <div />
-          <h1 className="text-4xl font-bold">3D Image Generator</h1>
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-cyan-400 via-blue-400 to-purple-400 bg-clip-text text-transparent">3D Image Generator</h1>
           <div className="text-right">
             {user ? (
               <div className="flex items-center gap-2 text-xs">
@@ -399,51 +430,55 @@ export default function ImageProcessor() {
       </header>
 
       {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      <div className="flex flex-wrap items-center gap-4 mb-5 bg-gray-900/50 backdrop-blur-sm rounded-xl px-4 py-3 border border-gray-800/50">
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span>Intensity:</span>
+          <span className="font-medium text-gray-300">Intensity</span>
           <input
             type="range"
             min="1"
             max="40"
             value={intensity}
             onChange={(e) => setIntensity(parseInt(e.target.value))}
-            className="w-24 accent-cyan-500 h-1.5"
+            className="w-28 accent-cyan-500 h-1.5"
           />
-          <span className="text-cyan-400 tabular-nums w-5 text-right">
+          <span className="text-cyan-400 tabular-nums w-5 text-right font-mono">
             {intensity}
           </span>
         </div>
 
+        <div className="w-px h-5 bg-gray-700" />
+
         <div className="flex items-center gap-2 text-xs text-gray-400">
-          <span>Color:</span>
+          <span className="font-medium text-gray-300">Color</span>
           <select
             value={colorMode}
             onChange={(e) => setColorMode(e.target.value)}
-            className="bg-gray-800 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-gray-300"
+            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-xs text-gray-300 focus:border-cyan-500 focus:outline-none transition-colors"
           >
             <option value="dubois">Dubois (better color)</option>
             <option value="classic">Classic red/cyan</option>
           </select>
         </div>
 
-        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+        <div className="w-px h-5 bg-gray-700" />
+
+        <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer group">
           <input
             type="checkbox"
             checked={fillOcclusion}
             onChange={(e) => setFillOcclusion(e.target.checked)}
             className="accent-cyan-500"
           />
-          Fill gaps
+          <span className="font-medium text-gray-300 group-hover:text-gray-200 transition-colors">Fill gaps</span>
         </label>
 
         <div className="flex-1" />
 
         {activeCount > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 bg-cyan-500/10 rounded-lg px-3 py-1.5">
             <div className="w-3 h-3 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-gray-400">
-              {activeCount} job{activeCount > 1 ? "s" : ""} processing...
+            <span className="text-xs text-cyan-400 font-medium">
+              {activeCount} job{activeCount > 1 ? "s" : ""} processing
             </span>
           </div>
         )}
@@ -453,32 +488,39 @@ export default function ImageProcessor() {
       <div
         onDrop={(e) => {
           e.preventDefault();
+          setIsDragging(false);
           handleFiles(e.dataTransfer.files);
         }}
-        onDragOver={(e) => e.preventDefault()}
+        onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+        onDragLeave={() => setIsDragging(false)}
         onClick={() => fileInputRef.current?.click()}
         className={`border-2 border-dashed rounded-xl text-center cursor-pointer select-none
-                   hover:border-cyan-500 hover:bg-gray-900/50 transition-all mb-5
+                   transition-all duration-200 mb-5
+                   ${isDragging
+                     ? "border-cyan-400 bg-cyan-500/10 scale-[1.01] shadow-lg shadow-cyan-500/10"
+                     : "hover:border-cyan-500 hover:bg-gray-900/50"}
                    ${jobs.length === 0 ? "p-14 border-gray-600" : "p-4 border-gray-700"}`}
       >
         {uploading ? (
-          <p className="text-sm text-cyan-400">Uploading...</p>
+          <div className="flex items-center justify-center gap-3">
+            <div className="w-5 h-5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-cyan-400">Uploading...</p>
+          </div>
         ) : jobs.length === 0 ? (
           <>
-            <div className="text-5xl mb-3 opacity-80">📸</div>
-            <p className="text-lg text-gray-300 mb-1">
-              Drop images or videos here
+            <div className="text-5xl mb-4 opacity-90">{isDragging ? "+" : "📸"}</div>
+            <p className="text-lg font-medium text-gray-200 mb-1">
+              {isDragging ? "Drop to convert" : "Drop images or videos here"}
             </p>
-            <p className="text-xs text-gray-500">
-              Multiple files &mdash; JPG, PNG, WebP, MP4, WebM, MOV
+            <p className="text-sm text-gray-500">
+              JPG, PNG, WebP, MP4, WebM, MOV &mdash; multiple files at once
             </p>
-            <p className="text-xs text-gray-600 mt-2">
-              Processing happens on the server &mdash; you can close this page
-              and come back later
+            <p className="text-xs text-gray-600 mt-3">
+              AI depth estimation &rarr; 6 output formats &mdash; processing continues even if you close this page
             </p>
           </>
         ) : (
-          <p className="text-sm text-gray-400">+ Add more files</p>
+          <p className="text-sm text-gray-400 hover:text-gray-300 transition-colors">+ Add more files</p>
         )}
         <input
           ref={fileInputRef}
@@ -630,33 +672,33 @@ export default function ImageProcessor() {
             {selected &&
               selected.mediaType === "image" &&
               selected.status === "done" && (
-                <div className="space-y-4">
-                  <div className="bg-gray-900 rounded-xl p-3 space-y-2">
+                <div className="space-y-4 animate-slide-up">
+                  <div className="bg-gray-900/80 backdrop-blur-sm rounded-xl p-4 space-y-3 border border-gray-800/50">
                     <div className="flex flex-wrap items-center gap-3">
-                    <h2 className="text-sm font-medium truncate flex-1">
+                    <h2 className="text-sm font-semibold truncate flex-1 text-gray-100">
                       {selected.fileName}
                     </h2>
-                    <div className="flex gap-2">
+                    <div className="flex gap-1.5">
                       <button
                         onClick={() => handleRotate(selected.id, -90)}
-                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs flex items-center justify-center transition-colors"
                         title="Rotate left 90°"
                       >
-                        ↺ 90°
+                        ↺
                       </button>
                       <button
                         onClick={() => handleRotate(selected.id, 90)}
-                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs flex items-center justify-center transition-colors"
                         title="Rotate right 90°"
                       >
-                        ↻ 90°
+                        ↻
                       </button>
                       <button
                         onClick={() => handleRotate(selected.id, 180)}
-                        className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
+                        className="w-8 h-8 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs flex items-center justify-center transition-colors"
                         title="Rotate 180°"
                       >
-                        ↻ 180°
+                        180
                       </button>
                       {selected.depthMapUrl && (
                         <button
@@ -665,22 +707,6 @@ export default function ImageProcessor() {
                         >
                           {editingDepth ? "Close Editor" : "Edit Depth"}
                         </button>
-                      )}
-                      {selected.anaglyphUrl && (
-                        <>
-                          <button
-                            onClick={() => handleDownload(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
-                            className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
-                          >
-                            Download
-                          </button>
-                          <button
-                            onClick={() => handleSaveToPhotos(selected.anaglyphUrl!, `3d-${selected.fileName.replace(/\.[^.]+$/, "")}.png`)}
-                            className="px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-lg text-xs font-medium transition-colors"
-                          >
-                            Save to Photos
-                          </button>
-                        </>
                       )}
                       <button
                         onClick={() => handleDelete(selected.id)}
@@ -747,104 +773,79 @@ export default function ImageProcessor() {
                     </Suspense>
                   )}
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Original
-                      </h3>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={selected.originalUrl}
-                        alt="Original"
-                        className="w-full rounded-lg border border-gray-800"
-                      />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Anaglyph 3D
-                      </h3>
-                      {selected.anaglyphUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={selected.anaglyphUrl}
-                          alt="Anaglyph"
-                          className="w-full rounded-lg border border-gray-800"
-                        />
-                      ) : (
-                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
-                          Processing...
+                  {/* Output tabs */}
+                  {(() => {
+                    const tabs = [
+                      { id: "anaglyph", label: "Anaglyph 3D", url: selected.anaglyphUrl },
+                      { id: "original", label: "Original", url: selected.originalUrl },
+                      { id: "depth", label: "Depth Map", url: selected.depthMapUrl },
+                      { id: "colormap", label: "Color Map", url: selected.distanceMapUrl },
+                      { id: "stereogram", label: "Magic Eye", url: selected.stereogramUrl },
+                      { id: "sbs", label: "Side-by-Side", url: selected.sbsUrl },
+                    ];
+                    const current = tabs.find(t => t.id === activeTab) || tabs[0];
+                    const baseName = selected.fileName.replace(/\.[^.]+$/, "");
+                    return (
+                      <div>
+                        {/* Tab bar */}
+                        <div className="flex gap-1 overflow-x-auto pb-2 mb-3 scrollbar-hide">
+                          {tabs.map(tab => (
+                            <button
+                              key={tab.id}
+                              onClick={() => setActiveTab(tab.id)}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all
+                                ${activeTab === tab.id
+                                  ? "bg-cyan-600 text-white shadow-lg shadow-cyan-500/20"
+                                  : tab.url
+                                    ? "bg-gray-800 text-gray-400 hover:text-gray-200 hover:bg-gray-700"
+                                    : "bg-gray-800/50 text-gray-600 cursor-not-allowed"}`}
+                              disabled={!tab.url && tab.id !== "original"}
+                            >
+                              {tab.label}
+                              {!tab.url && tab.id !== "original" && " --"}
+                            </button>
+                          ))}
                         </div>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Depth Map
-                      </h3>
-                      {selected.depthMapUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={selected.depthMapUrl}
-                          alt="Depth"
-                          className="w-full rounded-lg border border-gray-800"
-                        />
-                      ) : (
-                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
-                          Processing...
+                        {/* Active image */}
+                        <div className="relative group">
+                          {current.url ? (
+                            <>
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={current.url}
+                                alt={current.label}
+                                className="w-full rounded-xl border border-gray-800 cursor-zoom-in transition-transform"
+                                onClick={() => setLightboxUrl(current.url)}
+                              />
+                              {/* Overlay actions */}
+                              <div className="absolute bottom-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                {current.id !== "original" && (
+                                  <>
+                                    <button
+                                      onClick={() => handleDownload(current.url!, `${current.id}-${baseName}.png`)}
+                                      className="px-3 py-1.5 bg-black/70 backdrop-blur-sm hover:bg-black/90 rounded-lg text-xs font-medium transition-colors"
+                                    >
+                                      Download
+                                    </button>
+                                    <button
+                                      onClick={() => handleSaveToPhotos(current.url!, `${current.id}-${baseName}.png`)}
+                                      className="px-3 py-1.5 bg-black/70 backdrop-blur-sm hover:bg-black/90 rounded-lg text-xs font-medium transition-colors"
+                                    >
+                                      Share
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </>
+                          ) : (
+                            <div className="w-full aspect-video bg-gray-800/50 rounded-xl border border-gray-800 flex items-center justify-center text-gray-500 text-sm">
+                              Reprocess to generate
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Color Map
-                      </h3>
-                      {selected.distanceMapUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={selected.distanceMapUrl}
-                          alt="Distance"
-                          className="w-full rounded-lg border border-gray-800"
-                        />
-                      ) : (
-                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
-                          Processing...
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Magic Eye (Autostereogram)
-                      </h3>
-                      {selected.stereogramUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={selected.stereogramUrl}
-                          alt="Autostereogram"
-                          className="w-full rounded-lg border border-gray-800"
-                        />
-                      ) : (
-                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
-                          Reprocess to generate
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-medium text-gray-500 mb-1">
-                        Side-by-Side (Cross-eye 3D)
-                      </h3>
-                      {selected.sbsUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={selected.sbsUrl}
-                          alt="Side-by-Side"
-                          className="w-full rounded-lg border border-gray-800"
-                        />
-                      ) : (
-                        <div className="w-full aspect-square bg-gray-800 rounded-lg border border-gray-800 flex items-center justify-center text-gray-600 text-xs">
-                          Reprocess to generate
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1033,6 +1034,28 @@ export default function ImageProcessor() {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Lightbox */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex items-center justify-center p-4 cursor-zoom-out animate-fade-in"
+          onClick={() => setLightboxUrl(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={lightboxUrl}
+            alt="Full size"
+            className="max-w-full max-h-full object-contain rounded-lg"
+            onClick={(e) => e.stopPropagation()}
+          />
+          <button
+            onClick={() => setLightboxUrl(null)}
+            className="absolute top-4 right-4 w-10 h-10 bg-white/10 hover:bg-white/20 rounded-full flex items-center justify-center text-white text-xl transition-colors"
+          >
+            &times;
+          </button>
         </div>
       )}
     </div>
