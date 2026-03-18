@@ -39,9 +39,11 @@ const MORE_EXAMPLES = EX_IDS.map((ex) => ({
   label: ex.label,
   original: `${BASE}/originals/${ex.orig}`,
   outputs: [
-    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", color: "from-red-500 to-cyan-500", wide: false },
-    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", color: "from-green-500 to-purple-500", wide: false },
-    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", color: "from-cyan-500 to-blue-500", wide: true },
+    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500", wide: false },
+    { url: `${BASE}/depth/${ex.id}-depth.png`, label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white", wide: false },
+    { url: `${BASE}/distance/${ex.id}-distance.png`, label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false },
+    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false },
+    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
   ],
 }));
 
@@ -293,7 +295,7 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
           {MORE_EXAMPLES.map((ex, exIdx) => (
             <div key={ex.label}>
               <p className="text-[11px] text-gray-400 font-medium mb-2">{ex.label}</p>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {/* Original */}
                 <div
                   className="relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group"
@@ -309,7 +311,7 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
                 {ex.outputs.map((out, outIdx) => (
                   <div
                     key={out.label}
-                    className={`relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group ${out.wide ? "col-span-2 sm:col-span-3" : ""}`}
+                    className={`relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group ${out.wide ? "col-span-2 sm:col-span-4" : ""}`}
                     onClick={() => openGallery(MORE_GALLERIES[exIdx], outIdx + 1)}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
