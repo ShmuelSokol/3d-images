@@ -70,14 +70,22 @@ const VIDEO_FORMATS = [
 function VideoDemo() {
   const [activeFormat, setActiveFormat] = useState(0);
   const originalRef = useRef<HTMLVideoElement>(null);
-  const outputRef = useRef<HTMLVideoElement>(null);
+  const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
 
-  // Sync output video time with original when switching tabs
+  // On mount, sync all videos to the original's currentTime so they play together
   useEffect(() => {
-    if (originalRef.current && outputRef.current) {
-      outputRef.current.currentTime = originalRef.current.currentTime;
-    }
-  }, [activeFormat]);
+    const orig = originalRef.current;
+    if (!orig) return;
+    const syncAll = () => {
+      const t = orig.currentTime;
+      videoRefs.current.forEach((v) => {
+        if (v && Math.abs(v.currentTime - t) > 0.3) v.currentTime = t;
+      });
+    };
+    // Periodically re-sync to prevent drift (every 2s)
+    const interval = setInterval(syncAll, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   const fmt = VIDEO_FORMATS[activeFormat];
 
@@ -122,18 +130,21 @@ function VideoDemo() {
           </div>
         </div>
 
-        {/* 3D output video */}
+        {/* All 3D output videos — all mounted, only active one visible */}
         <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-          <video
-            ref={outputRef}
-            key={fmt.key}
-            src={VIDEO_DEMO[fmt.key]}
-            autoPlay
-            loop
-            muted
-            playsInline
-            className={`w-full aspect-video ${fmt.key === "sbs" ? "object-contain bg-black" : "object-cover"}`}
-          />
+          {VIDEO_FORMATS.map((f, i) => (
+            <div key={f.key} className={i === activeFormat ? "" : "absolute inset-0 invisible"}>
+              <video
+                ref={(el) => { videoRefs.current[i] = el; }}
+                src={VIDEO_DEMO[f.key]}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className={`w-full aspect-video ${f.key === "sbs" ? "object-contain bg-black" : "object-cover"}`}
+              />
+            </div>
+          ))}
           <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
             <span className={`text-xs font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
               {fmt.label}
