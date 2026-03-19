@@ -69,90 +69,182 @@ const VIDEO_FORMATS = [
 
 function VideoDemo() {
   const [activeFormat, setActiveFormat] = useState(0);
+  const [fullscreen, setFullscreen] = useState(false);
   const originalRef = useRef<HTMLVideoElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  const fsOriginalRef = useRef<HTMLVideoElement>(null);
+  const fsVideoRefs = useRef<(HTMLVideoElement | null)[]>([]);
 
   const switchFormat = useCallback((i: number) => {
     setActiveFormat(i);
-    // One-time sync when switching: snap the newly visible video to the original's time
     const orig = originalRef.current;
     const target = videoRefs.current[i];
     if (orig && target && Math.abs(target.currentTime - orig.currentTime) > 0.3) {
       target.currentTime = orig.currentTime;
     }
+    const fsOrig = fsOriginalRef.current;
+    const fsTarget = fsVideoRefs.current[i];
+    if (fsOrig && fsTarget && Math.abs(fsTarget.currentTime - fsOrig.currentTime) > 0.3) {
+      fsTarget.currentTime = fsOrig.currentTime;
+    }
   }, []);
+
+  const openFullscreen = useCallback(() => {
+    setFullscreen(true);
+    document.body.style.overflow = "hidden";
+    // Sync fullscreen videos to inline video time after a tick (refs need to mount)
+    setTimeout(() => {
+      const t = originalRef.current?.currentTime ?? 0;
+      if (fsOriginalRef.current) fsOriginalRef.current.currentTime = t;
+      fsVideoRefs.current.forEach((v) => { if (v) v.currentTime = t; });
+    }, 50);
+  }, []);
+
+  const closeFullscreen = useCallback(() => {
+    setFullscreen(false);
+    document.body.style.overflow = "";
+  }, []);
+
+  // Keyboard: Escape closes, arrow keys switch formats
+  useEffect(() => {
+    if (!fullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeFullscreen();
+      else if (e.key === "ArrowRight") switchFormat((activeFormat + 1) % VIDEO_FORMATS.length);
+      else if (e.key === "ArrowLeft") switchFormat((activeFormat - 1 + VIDEO_FORMATS.length) % VIDEO_FORMATS.length);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [fullscreen, activeFormat, closeFullscreen, switchFormat]);
 
   const fmt = VIDEO_FORMATS[activeFormat];
 
   return (
-    <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-8">
-      <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Video Demo</p>
-
-      {/* Format tabs */}
-      <div className="flex justify-center gap-2 mb-4">
-        {VIDEO_FORMATS.map((f, i) => (
-          <button
-            key={f.key}
-            onClick={() => switchFormat(i)}
-            className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
-              i === activeFormat
-                ? "bg-white/10 text-white border border-white/20"
-                : "text-gray-500 hover:text-gray-300 border border-transparent"
-            }`}
-          >
-            <span className={i === activeFormat ? `bg-gradient-to-r ${f.color} bg-clip-text text-transparent` : ""}>
-              {f.label}
-            </span>
+    <>
+      {/* Fullscreen video lightbox */}
+      {fullscreen && (
+        <div className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4" onClick={closeFullscreen}>
+          {/* Close */}
+          <button className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors z-10" onClick={closeFullscreen}>
+            <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
           </button>
-        ))}
-      </div>
 
-      {/* Side-by-side: original on left, 3D on right */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Original video */}
-        <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-          <video
-            ref={originalRef}
-            src={VIDEO_DEMO.original}
-            autoPlay
-            loop
-            muted
-            playsInline
-            className="w-full aspect-video object-cover"
-          />
-          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
-            <span className="text-xs font-semibold text-white/90">Original Video</span>
+          {/* Format tabs */}
+          <div className="flex gap-2 mb-4 z-10" onClick={(e) => e.stopPropagation()}>
+            {VIDEO_FORMATS.map((f, i) => (
+              <button
+                key={f.key}
+                onClick={() => switchFormat(i)}
+                className={`px-4 py-2 rounded-lg text-xs font-medium transition-all ${
+                  i === activeFormat
+                    ? "bg-white/15 text-white border border-white/25"
+                    : "text-gray-400 hover:text-gray-200 border border-transparent hover:bg-white/5"
+                }`}
+              >
+                <span className={i === activeFormat ? `bg-gradient-to-r ${f.color} bg-clip-text text-transparent` : ""}>
+                  {f.label}
+                </span>
+              </button>
+            ))}
           </div>
-        </div>
 
-        {/* All 3D output videos — all mounted, only active one visible */}
-        <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-          {VIDEO_FORMATS.map((f, i) => (
-            <div key={f.key} className={i === activeFormat ? "" : "absolute inset-0 invisible"}>
-              <video
-                ref={(el) => { videoRefs.current[i] = el; }}
-                src={VIDEO_DEMO[f.key]}
-                autoPlay
-                loop
-                muted
-                playsInline
-                className={`w-full aspect-video ${f.key === "sbs" ? "object-contain bg-black" : "object-cover"}`}
-              />
+          {/* Side-by-side videos */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-6xl w-full" onClick={(e) => e.stopPropagation()}>
+            <div className="relative rounded-xl overflow-hidden">
+              <video ref={fsOriginalRef} src={VIDEO_DEMO.original} autoPlay loop muted playsInline className="w-full aspect-video object-cover" />
+              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+                <span className="text-xs font-semibold text-white/90">Original Video</span>
+              </div>
             </div>
+            <div className="relative rounded-xl overflow-hidden">
+              {VIDEO_FORMATS.map((f, i) => (
+                <div key={f.key} className={i === activeFormat ? "" : "absolute inset-0 invisible"}>
+                  <video
+                    ref={(el) => { fsVideoRefs.current[i] = el; }}
+                    src={VIDEO_DEMO[f.key]}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    className={`w-full aspect-video ${f.key === "sbs" ? "object-contain bg-black" : "object-cover"}`}
+                  />
+                </div>
+              ))}
+              <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+                <span className={`text-xs font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
+                  {fmt.label}
+                </span>
+                <span className="text-[9px] text-white/40 ml-1.5">{fmt.desc}</span>
+              </div>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-gray-500 mt-3">Escape to close &middot; Arrow keys to switch format</p>
+        </div>
+      )}
+
+      {/* Inline video demo */}
+      <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-8">
+        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Video Demo</p>
+
+        {/* Format tabs */}
+        <div className="flex justify-center gap-2 mb-4">
+          {VIDEO_FORMATS.map((f, i) => (
+            <button
+              key={f.key}
+              onClick={() => switchFormat(i)}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
+                i === activeFormat
+                  ? "bg-white/10 text-white border border-white/20"
+                  : "text-gray-500 hover:text-gray-300 border border-transparent"
+              }`}
+            >
+              <span className={i === activeFormat ? `bg-gradient-to-r ${f.color} bg-clip-text text-transparent` : ""}>
+                {f.label}
+              </span>
+            </button>
           ))}
-          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
-            <span className={`text-xs font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
-              {fmt.label}
-            </span>
-            <span className="text-[9px] text-white/40 ml-1.5">{fmt.desc}</span>
+        </div>
+
+        {/* Side-by-side: original on left, 3D on right — click to fullscreen */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 cursor-pointer" onClick={openFullscreen}>
+          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+            <video ref={originalRef} src={VIDEO_DEMO.original} autoPlay loop muted playsInline className="w-full aspect-video object-cover" />
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+              <span className="text-xs font-semibold text-white/90">Original Video</span>
+            </div>
+          </div>
+
+          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+            {VIDEO_FORMATS.map((f, i) => (
+              <div key={f.key} className={i === activeFormat ? "" : "absolute inset-0 invisible"}>
+                <video
+                  ref={(el) => { videoRefs.current[i] = el; }}
+                  src={VIDEO_DEMO[f.key]}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className={`w-full aspect-video ${f.key === "sbs" ? "object-contain bg-black" : "object-cover"}`}
+                />
+              </div>
+            ))}
+            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+              <span className={`text-xs font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
+                {fmt.label}
+              </span>
+              <span className="text-[9px] text-white/40 ml-1.5">{fmt.desc}</span>
+            </div>
           </div>
         </div>
-      </div>
 
-      <p className="text-[10px] text-gray-600 text-center mt-3">
-        Niagara Falls &middot; 50 seconds &middot; Upload any video and get 3D output in multiple formats
-      </p>
-    </div>
+        <p className="text-[10px] text-gray-600 text-center mt-3">
+          Click to fullscreen &middot; Niagara Falls &middot; 50 seconds
+        </p>
+      </div>
+    </>
   );
 }
 
@@ -166,6 +258,12 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
 
   const openGallery = useCallback((items: { url: string; label: string }[], index: number) => {
     setGallery({ items, index });
+    document.body.style.overflow = "hidden";
+  }, []);
+
+  const closeGallery = useCallback(() => {
+    setGallery(null);
+    document.body.style.overflow = "";
   }, []);
 
   const goNext = useCallback(() => {
@@ -182,11 +280,11 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
     const handler = (e: KeyboardEvent) => {
       if (e.key === "ArrowRight") goNext();
       else if (e.key === "ArrowLeft") goPrev();
-      else if (e.key === "Escape") setGallery(null);
+      else if (e.key === "Escape") closeGallery();
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [gallery, goNext, goPrev]);
+  }, [gallery, goNext, goPrev, closeGallery]);
 
   const current = gallery ? gallery.items[gallery.index] : null;
 
@@ -196,12 +294,12 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
       {gallery && current && (
         <div
           className="fixed inset-0 z-50 bg-black/95 flex flex-col items-center justify-center p-4"
-          onClick={() => setGallery(null)}
+          onClick={() => closeGallery()}
         >
           {/* Close */}
           <button
             className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors z-10"
-            onClick={() => setGallery(null)}
+            onClick={() => closeGallery()}
           >
             <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
