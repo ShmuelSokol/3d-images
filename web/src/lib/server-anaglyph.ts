@@ -492,3 +492,126 @@ export function generateSideBySide(
 
   return { data: out, width: outWidth, height };
 }
+
+/**
+ * Generate Wiggle 3D — two depth-shifted views (left/right eye).
+ * Caller combines into an animated GIF or looping video for glasses-free 3D.
+ */
+export function generateWiggle3D(
+  image: RawImage,
+  depthData: Float32Array,
+  depthWidth: number,
+  depthHeight: number,
+  intensity: number = 6
+): { left: RawImage; right: RawImage } {
+  const { data: pixels, width, height } = image;
+
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) {
+    normalized[i] = (depthData[i] - minD) / rangeD;
+  }
+  const blurRadius = Math.max(2, Math.round(Math.min(depthWidth, depthHeight) / 150));
+  const smoothed = blurDepth(normalized, depthWidth, depthHeight, blurRadius);
+
+  const leftBuf = Buffer.alloc(width * height * 4);
+  const rightBuf = Buffer.alloc(width * height * 4);
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const d = sampleDepth(smoothed, depthWidth, depthHeight, x, y, width, height);
+      const shift = d * intensity;
+      const idx = (y * width + x) * 4;
+
+      const lx = Math.min(Math.max(x + shift, 0), width - 1);
+      leftBuf[idx] = sampleBilinear(pixels, width, height, lx, y, 0);
+      leftBuf[idx + 1] = sampleBilinear(pixels, width, height, lx, y, 1);
+      leftBuf[idx + 2] = sampleBilinear(pixels, width, height, lx, y, 2);
+      leftBuf[idx + 3] = 255;
+
+      const rx = Math.min(Math.max(x - shift, 0), width - 1);
+      rightBuf[idx] = sampleBilinear(pixels, width, height, rx, y, 0);
+      rightBuf[idx + 1] = sampleBilinear(pixels, width, height, rx, y, 1);
+      rightBuf[idx + 2] = sampleBilinear(pixels, width, height, rx, y, 2);
+      rightBuf[idx + 3] = 255;
+    }
+  }
+
+  return {
+    left: { data: leftBuf, width, height },
+    right: { data: rightBuf, width, height },
+  };
+}
+
+/**
+ * Generate a Color Stereogram — uses the original image as the repeating
+ * pattern instead of random dots. Full color, same cross-eye viewing.
+ */
+export function generateColorStereogram(
+  image: RawImage,
+  depthData: Float32Array,
+  depthWidth: number,
+  depthHeight: number
+): RawImage {
+  const { data: pixels, width: outW, height: outH } = image;
+
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) {
+    normalized[i] = (depthData[i] - minD) / rangeD;
+  }
+
+  const stripWidth = Math.round(outW / 7);
+  const maxShift = Math.round(stripWidth * 0.35);
+  const out = Buffer.alloc(outW * outH * 4);
+
+  for (let y = 0; y < outH; y++) {
+    const same = new Int32Array(outW);
+    for (let x = 0; x < outW; x++) same[x] = x;
+
+    for (let x = 0; x < outW; x++) {
+      const d = sampleDepth(normalized, depthWidth, depthHeight, x, y, outW, outH);
+      const sep = stripWidth - Math.round(d * maxShift);
+      const left = Math.round(x - sep / 2);
+      const right = left + sep;
+      if (left >= 0 && right < outW) {
+        let l = left, r = right;
+        while (same[l] !== l) l = same[l];
+        while (same[r] !== r) r = same[r];
+        if (l !== r) {
+          if (l < r) same[r] = l;
+          else same[l] = r;
+        }
+      }
+    }
+
+    for (let x = 0; x < outW; x++) {
+      let root = x;
+      while (same[root] !== root) root = same[root];
+      same[x] = root;
+    }
+
+    // Sample color from original image at root position
+    for (let x = 0; x < outW; x++) {
+      const srcX = same[x] % outW;
+      const srcIdx = (y * outW + srcX) * 4;
+      const dstIdx = (y * outW + x) * 4;
+      out[dstIdx] = pixels[srcIdx];
+      out[dstIdx + 1] = pixels[srcIdx + 1];
+      out[dstIdx + 2] = pixels[srcIdx + 2];
+      out[dstIdx + 3] = 255;
+    }
+  }
+
+  return { data: out, width: outW, height: outH };
+}

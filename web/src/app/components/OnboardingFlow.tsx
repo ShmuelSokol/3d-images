@@ -6,21 +6,25 @@ const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/
 const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
 const VIDEO_ID = "cmmwe0ous0000qazwsthfi6mt";
 
-const DEMO = {
+const DEMO: Record<string, string> = {
   original: `${BASE}/originals/1773749482004-6vqotz14l2.jpeg`,
   anaglyph: `${BASE}/anaglyph/${MAIN_ID}-anaglyph.png`,
   depth: `${BASE}/depth/${MAIN_ID}-depth.png`,
   colormap: `${BASE}/distance/${MAIN_ID}-distance.png`,
   stereogram: `${BASE}/stereogram/${MAIN_ID}-stereogram.png`,
   sbs: `${BASE}/sbs/${MAIN_ID}-sbs.png`,
+  wiggle: `${BASE}/wiggle/${MAIN_ID}-wiggle.mp4`,
+  colorStereo: `${BASE}/color-stereo/${MAIN_ID}-color-stereo.png`,
 };
 
 const OUTPUTS = [
-  { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500", wide: false },
-  { key: "depth", label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white", wide: false },
-  { key: "colormap", label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false },
-  { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false },
-  { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
+  { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500", wide: false, video: false, paid: false },
+  { key: "depth", label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white", wide: false, video: false, paid: false },
+  { key: "colormap", label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false, video: false, paid: false },
+  { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false, video: false, paid: false },
+  { key: "wiggle", label: "Wiggle 3D", desc: "No glasses needed!", color: "from-amber-500 to-orange-500", wide: false, video: true, paid: true },
+  { key: "colorStereo", label: "Color Stereogram", desc: "Full-color Magic Eye", color: "from-pink-500 to-violet-500", wide: false, video: false, paid: true },
+  { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true, video: false, paid: false },
 ];
 
 const VIDEO_DEMO: Record<string, string> = {
@@ -30,10 +34,10 @@ const VIDEO_DEMO: Record<string, string> = {
   sbs: `${BASE}/videos/${VIDEO_ID}-sbs.mp4`,
 };
 
-// Build a flat gallery of all demo images for lightbox navigation
+// Build a flat gallery of all demo items for lightbox navigation
 const MAIN_GALLERY = [
-  { url: DEMO.original, label: "Original Photo" },
-  ...OUTPUTS.map((o) => ({ url: DEMO[o.key as keyof typeof DEMO], label: o.label })),
+  { url: DEMO.original, label: "Original Photo", video: false },
+  ...OUTPUTS.map((o) => ({ url: DEMO[o.key], label: o.label, video: o.video })),
 ];
 
 // Additional examples with all output types
@@ -47,18 +51,20 @@ const MORE_EXAMPLES = EX_IDS.map((ex) => ({
   label: ex.label,
   original: `${BASE}/originals/${ex.orig}`,
   outputs: [
-    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500", wide: false },
-    { url: `${BASE}/depth/${ex.id}-depth.png`, label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white", wide: false },
-    { url: `${BASE}/distance/${ex.id}-distance.png`, label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false },
-    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false },
-    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
+    { url: `${BASE}/anaglyph/${ex.id}-anaglyph.png`, label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500", wide: false, video: false, paid: false },
+    { url: `${BASE}/depth/${ex.id}-depth.png`, label: "Depth Map", desc: "AI depth per pixel", color: "from-gray-400 to-white", wide: false, video: false, paid: false },
+    { url: `${BASE}/distance/${ex.id}-distance.png`, label: "Color Map", desc: "Depth visualization", color: "from-blue-500 to-red-500", wide: false, video: false, paid: false },
+    { url: `${BASE}/stereogram/${ex.id}-stereogram.png`, label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500", wide: false, video: false, paid: false },
+    { url: `${BASE}/wiggle/${ex.id}-wiggle.mp4`, label: "Wiggle 3D", desc: "No glasses needed!", color: "from-amber-500 to-orange-500", wide: false, video: true, paid: true },
+    { url: `${BASE}/color-stereo/${ex.id}-color-stereo.png`, label: "Color Stereogram", desc: "Full-color Magic Eye", color: "from-pink-500 to-violet-500", wide: false, video: false, paid: true },
+    { url: `${BASE}/sbs/${ex.id}-sbs.png`, label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true, video: false, paid: false },
   ],
 }));
 
 // Build galleries for each "more example"
 const MORE_GALLERIES = MORE_EXAMPLES.map((ex) => [
-  { url: ex.original, label: `${ex.label} — Original` },
-  ...ex.outputs.map((o) => ({ url: o.url, label: `${ex.label} — ${o.label}` })),
+  { url: ex.original, label: `${ex.label} — Original`, video: false },
+  ...ex.outputs.map((o) => ({ url: o.url, label: `${ex.label} — ${o.label}`, video: o.video })),
 ]);
 
 const VIDEO_FORMATS = [
@@ -288,9 +294,9 @@ interface OnboardingFlowProps {
 }
 
 export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlowProps) {
-  const [gallery, setGallery] = useState<{ items: { url: string; label: string }[]; index: number } | null>(null);
+  const [gallery, setGallery] = useState<{ items: { url: string; label: string; video: boolean }[]; index: number } | null>(null);
 
-  const openGallery = useCallback((items: { url: string; label: string }[], index: number) => {
+  const openGallery = useCallback((items: { url: string; label: string; video: boolean }[], index: number) => {
     setGallery({ items, index });
     document.body.style.overflow = "hidden";
   }, []);
@@ -352,15 +358,29 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
             </button>
           )}
 
-          {/* Image */}
+          {/* Image or Video */}
           <div className="max-w-6xl max-h-[85vh] w-full flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              key={current.url}
-              src={current.url}
-              alt={current.label}
-              className="max-w-full max-h-[85vh] object-contain rounded-lg"
-            />
+            {current.video ? (
+              <video
+                key={current.url}
+                src={current.url}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="max-w-full max-h-[85vh] object-contain rounded-lg"
+              />
+            ) : (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  key={current.url}
+                  src={current.url}
+                  alt={current.label}
+                  className="max-w-full max-h-[85vh] object-contain rounded-lg"
+                />
+              </>
+            )}
           </div>
 
           {/* Next arrow */}
@@ -438,13 +458,29 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
               className={`relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group ${fmt.wide ? "col-span-2 sm:col-span-4" : ""}`}
               onClick={() => openGallery(MAIN_GALLERY, i + 1)}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={DEMO[fmt.key as keyof typeof DEMO]}
-                alt={fmt.label}
-                loading="lazy"
-                className={`w-full ${fmt.wide ? "aspect-auto object-contain bg-black/50" : "aspect-[16/10] object-cover"} group-hover:scale-[1.01] transition-transform duration-300`}
-              />
+              {fmt.video ? (
+                <video
+                  src={DEMO[fmt.key]}
+                  autoPlay
+                  loop
+                  muted
+                  playsInline
+                  className="w-full aspect-[16/10] object-cover group-hover:scale-[1.01] transition-transform duration-300"
+                />
+              ) : (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={DEMO[fmt.key]}
+                    alt={fmt.label}
+                    loading="lazy"
+                    className={`w-full ${fmt.wide ? "aspect-auto object-contain bg-black/50" : "aspect-[16/10] object-cover"} group-hover:scale-[1.01] transition-transform duration-300`}
+                  />
+                </>
+              )}
+              {fmt.paid && (
+                <span className="absolute top-1.5 right-1.5 text-[8px] font-bold bg-amber-500/90 text-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">Pro</span>
+              )}
               <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5">
                 <span className={`text-[11px] font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
                   {fmt.label}
@@ -500,9 +536,9 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
               <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z" />
             </svg>
           </div>
-          <h3 className="text-sm font-semibold text-gray-100 mb-1">Get 6 Outputs</h3>
+          <h3 className="text-sm font-semibold text-gray-100 mb-1">Get 7+ Outputs</h3>
           <p className="text-xs text-gray-500 leading-relaxed">
-            Anaglyph 3D, depth map, color map, Magic Eye, side-by-side &amp; more.
+            Anaglyph 3D, depth map, Magic Eye, Wiggle 3D, Color Stereogram &amp; more.
           </p>
         </div>
       </div>
@@ -552,13 +588,22 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
                     className={`relative rounded-xl overflow-hidden border border-gray-700/50 cursor-pointer group ${out.wide ? "col-span-2 sm:col-span-4" : ""}`}
                     onClick={() => openGallery(MORE_GALLERIES[exIdx], outIdx + 1)}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={out.url}
-                      alt={`${ex.label} — ${out.label}`}
-                      loading="lazy"
-                      className={`w-full ${out.wide ? "aspect-auto object-contain bg-black/50" : "aspect-[16/10] object-cover"} group-hover:scale-[1.01] transition-transform duration-300`}
-                    />
+                    {out.video ? (
+                      <video src={out.url} autoPlay loop muted playsInline className="w-full aspect-[16/10] object-cover group-hover:scale-[1.01] transition-transform duration-300" />
+                    ) : (
+                      <>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={out.url}
+                          alt={`${ex.label} — ${out.label}`}
+                          loading="lazy"
+                          className={`w-full ${out.wide ? "aspect-auto object-contain bg-black/50" : "aspect-[16/10] object-cover"} group-hover:scale-[1.01] transition-transform duration-300`}
+                        />
+                      </>
+                    )}
+                    {out.paid && (
+                      <span className="absolute top-1 right-1 text-[7px] font-bold bg-amber-500/90 text-black px-1 py-0.5 rounded-full uppercase tracking-wider">Pro</span>
+                    )}
                     <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-2 py-1">
                       <span className={`text-[10px] font-semibold bg-gradient-to-r ${out.color} bg-clip-text text-transparent`}>{out.label}</span>
                     </div>
