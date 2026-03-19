@@ -23,10 +23,10 @@ const OUTPUTS = [
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
 ];
 
-const VIDEO_DEMO: Record<string, string | null> = {
+const VIDEO_DEMO: Record<string, string> = {
   original: `${BASE}/originals/1773859284614-demo-video.mp4`,
   anaglyph: `${BASE}/videos/${VIDEO_ID}-anaglyph.mp4`,
-  stereogram: null, // Too large for Supabase free tier (65MB); will work once compression fix deploys
+  stereogram: `${BASE}/videos/${VIDEO_ID}-stereogram.mp4`,
   sbs: `${BASE}/videos/${VIDEO_ID}-sbs.mp4`,
 };
 
@@ -65,7 +65,7 @@ const VIDEO_FORMATS = [
   { key: "anaglyph" as const, label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500" },
   { key: "stereogram" as const, label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500" },
   { key: "sbs" as const, label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
-].filter((f) => VIDEO_DEMO[f.key]); // Only show formats that have a video URL
+];
 
 function VideoDemo() {
   const [activeFormat, setActiveFormat] = useState(0);
@@ -110,7 +110,7 @@ function VideoDemo() {
         <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
           <video
             ref={originalRef}
-            src={VIDEO_DEMO.original || undefined}
+            src={VIDEO_DEMO.original}
             autoPlay
             loop
             muted
@@ -127,12 +127,12 @@ function VideoDemo() {
           <video
             ref={outputRef}
             key={fmt.key}
-            src={VIDEO_DEMO[fmt.key] || undefined}
+            src={VIDEO_DEMO[fmt.key]}
             autoPlay
             loop
             muted
             playsInline
-            className="w-full aspect-video object-cover"
+            className={`w-full aspect-video ${fmt.key === "sbs" ? "object-contain bg-black" : "object-cover"}`}
           />
           <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
             <span className={`text-xs font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
