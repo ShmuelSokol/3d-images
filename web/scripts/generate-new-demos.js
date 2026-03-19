@@ -203,8 +203,8 @@ function generateColorStereogramLocal(image, depthData, depthW, depthH) {
   const rangeD = maxD - minD || 1;
   const normalized = new Float32Array(depthData.length);
   for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
-  const stripWidth = Math.round(outW / 7);
-  const maxShift = Math.round(stripWidth * 0.35);
+  const stripWidth = Math.round(outW / 4);
+  const maxShift = Math.round(stripWidth * 0.25);
   const out = Buffer.alloc(outW * outH * 4);
   for (let y = 0; y < outH; y++) {
     const same = new Int32Array(outW);

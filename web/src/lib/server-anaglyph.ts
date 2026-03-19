@@ -571,8 +571,9 @@ export function generateColorStereogram(
     normalized[i] = (depthData[i] - minD) / rangeD;
   }
 
-  const stripWidth = Math.round(outW / 7);
-  const maxShift = Math.round(stripWidth * 0.35);
+  // Wider strip than random-dot stereograms so the original image is more recognizable
+  const stripWidth = Math.round(outW / 4);
+  const maxShift = Math.round(stripWidth * 0.25);
   const out = Buffer.alloc(outW * outH * 4);
 
   for (let y = 0; y < outH; y++) {
