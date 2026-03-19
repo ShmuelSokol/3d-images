@@ -549,8 +549,10 @@ export function generateWiggle3D(
 }
 
 /**
- * Generate a Color Stereogram — uses the original image as the repeating
- * pattern instead of random dots. Full color, same cross-eye viewing.
+ * Generate a Color Stereogram using strip-based feedback.
+ * The leftmost strip is seeded from the original image, then each subsequent
+ * strip copies from the previous one with a depth-dependent horizontal shift.
+ * This creates clean repetition that encodes 3D depth for cross-eye viewing.
  */
 export function generateColorStereogram(
   image: RawImage,
@@ -571,45 +573,35 @@ export function generateColorStereogram(
     normalized[i] = (depthData[i] - minD) / rangeD;
   }
 
-  // Wider strip than random-dot stereograms so the original image is more recognizable
-  const stripWidth = Math.round(outW / 4);
-  const maxShift = Math.round(stripWidth * 0.25);
+  // Light depth blur to smooth edges
+  const blurRadius = Math.max(3, Math.round(Math.min(depthWidth, depthHeight) / 100));
+  const smoothed = blurDepth(normalized, depthWidth, depthHeight, blurRadius);
+
+  const stripWidth = Math.round(outW / 7);
+  const maxShift = Math.round(stripWidth * 0.05);
   const out = Buffer.alloc(outW * outH * 4);
 
   for (let y = 0; y < outH; y++) {
-    const same = new Int32Array(outW);
-    for (let x = 0; x < outW; x++) same[x] = x;
-
-    for (let x = 0; x < outW; x++) {
-      const d = sampleDepth(normalized, depthWidth, depthHeight, x, y, outW, outH);
-      const sep = stripWidth - Math.round(d * maxShift);
-      const left = Math.round(x - sep / 2);
-      const right = left + sep;
-      if (left >= 0 && right < outW) {
-        let l = left, r = right;
-        while (same[l] !== l) l = same[l];
-        while (same[r] !== r) r = same[r];
-        if (l !== r) {
-          if (l < r) same[r] = l;
-          else same[l] = r;
-        }
-      }
+    // Seed: first strip from original image
+    for (let x = 0; x < stripWidth && x < outW; x++) {
+      const idx = (y * outW + x) * 4;
+      out[idx] = pixels[idx];
+      out[idx + 1] = pixels[idx + 1];
+      out[idx + 2] = pixels[idx + 2];
+      out[idx + 3] = 255;
     }
 
-    for (let x = 0; x < outW; x++) {
-      let root = x;
-      while (same[root] !== root) root = same[root];
-      same[x] = root;
-    }
-
-    // Sample color from original image at root position
-    for (let x = 0; x < outW; x++) {
-      const srcX = same[x] % outW;
-      const srcIdx = (y * outW + srcX) * 4;
+    // Each subsequent strip: copy from previous strip + depth shift
+    for (let x = stripWidth; x < outW; x++) {
+      const d = sampleDepth(smoothed, depthWidth, depthHeight, x, y, outW, outH);
+      const shift = Math.round(d * maxShift);
+      let srcX = x - stripWidth + shift;
+      srcX = Math.max(0, Math.min(srcX, outW - 1));
       const dstIdx = (y * outW + x) * 4;
-      out[dstIdx] = pixels[srcIdx];
-      out[dstIdx + 1] = pixels[srcIdx + 1];
-      out[dstIdx + 2] = pixels[srcIdx + 2];
+      const srcIdx = (y * outW + srcX) * 4;
+      out[dstIdx] = out[srcIdx];
+      out[dstIdx + 1] = out[srcIdx + 1];
+      out[dstIdx + 2] = out[srcIdx + 2];
       out[dstIdx + 3] = 255;
     }
   }

@@ -203,30 +203,24 @@ function generateColorStereogramLocal(image, depthData, depthW, depthH) {
   const rangeD = maxD - minD || 1;
   const normalized = new Float32Array(depthData.length);
   for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
-  const stripWidth = Math.round(outW / 4);
-  const maxShift = Math.round(stripWidth * 0.25);
+  const blurRadius = Math.max(3, Math.round(Math.min(depthW, depthH) / 100));
+  const smoothed = blurDepthLocal(normalized, depthW, depthH, blurRadius);
+  const stripWidth = Math.round(outW / 7);
+  const maxShift = Math.round(stripWidth * 0.05);
   const out = Buffer.alloc(outW * outH * 4);
   for (let y = 0; y < outH; y++) {
-    const same = new Int32Array(outW);
-    for (let x = 0; x < outW; x++) same[x] = x;
-    for (let x = 0; x < outW; x++) {
-      const d = sampleDepthLocal(normalized, depthW, depthH, x, y, outW, outH);
-      const sep = stripWidth - Math.round(d * maxShift);
-      const left = Math.round(x - sep / 2);
-      const right = left + sep;
-      if (left >= 0 && right < outW) {
-        let l = left, r = right;
-        while (same[l] !== l) l = same[l];
-        while (same[r] !== r) r = same[r];
-        if (l !== r) { if (l < r) same[r] = l; else same[l] = r; }
-      }
+    for (let x = 0; x < stripWidth && x < outW; x++) {
+      const idx = (y * outW + x) * 4;
+      out[idx] = pixels[idx]; out[idx+1] = pixels[idx+1]; out[idx+2] = pixels[idx+2]; out[idx+3] = 255;
     }
-    for (let x = 0; x < outW; x++) { let root = x; while (same[root] !== root) root = same[root]; same[x] = root; }
-    for (let x = 0; x < outW; x++) {
-      const srcX = same[x] % outW;
-      const srcIdx = (y * outW + srcX) * 4;
+    for (let x = stripWidth; x < outW; x++) {
+      const d = sampleDepthLocal(smoothed, depthW, depthH, x, y, outW, outH);
+      const shift = Math.round(d * maxShift);
+      let srcX = x - stripWidth + shift;
+      srcX = Math.max(0, Math.min(srcX, outW - 1));
       const dstIdx = (y * outW + x) * 4;
-      out[dstIdx] = pixels[srcIdx]; out[dstIdx+1] = pixels[srcIdx+1]; out[dstIdx+2] = pixels[srcIdx+2]; out[dstIdx+3] = 255;
+      const srcIdx = (y * outW + srcX) * 4;
+      out[dstIdx] = out[srcIdx]; out[dstIdx+1] = out[srcIdx+1]; out[dstIdx+2] = out[srcIdx+2]; out[dstIdx+3] = 255;
     }
   }
   return { data: out, width: outW, height: outH };
