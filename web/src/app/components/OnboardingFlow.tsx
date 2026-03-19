@@ -72,19 +72,14 @@ function VideoDemo() {
   const originalRef = useRef<HTMLVideoElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
 
-  // On mount, sync all videos to the original's currentTime so they play together
-  useEffect(() => {
+  const switchFormat = useCallback((i: number) => {
+    setActiveFormat(i);
+    // One-time sync when switching: snap the newly visible video to the original's time
     const orig = originalRef.current;
-    if (!orig) return;
-    const syncAll = () => {
-      const t = orig.currentTime;
-      videoRefs.current.forEach((v) => {
-        if (v && Math.abs(v.currentTime - t) > 0.3) v.currentTime = t;
-      });
-    };
-    // Periodically re-sync to prevent drift (every 2s)
-    const interval = setInterval(syncAll, 2000);
-    return () => clearInterval(interval);
+    const target = videoRefs.current[i];
+    if (orig && target && Math.abs(target.currentTime - orig.currentTime) > 0.3) {
+      target.currentTime = orig.currentTime;
+    }
   }, []);
 
   const fmt = VIDEO_FORMATS[activeFormat];
@@ -98,7 +93,7 @@ function VideoDemo() {
         {VIDEO_FORMATS.map((f, i) => (
           <button
             key={f.key}
-            onClick={() => setActiveFormat(i)}
+            onClick={() => switchFormat(i)}
             className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
               i === activeFormat
                 ? "bg-white/10 text-white border border-white/20"
