@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
 const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
@@ -73,11 +73,7 @@ const VIDEO_FORMATS = [
   { key: "sbs" as const, label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
 ];
 
-// All fullscreen tabs: original + 3 formats
-const FS_TABS = [
-  { key: "original", label: "Original", desc: "Source video", color: "from-gray-300 to-white" },
-  ...VIDEO_FORMATS,
-];
+
 
 function VideoDemo() {
   const [fsVideo, setFsVideo] = useState<string | null>(null);
