@@ -30,7 +30,7 @@ const VIDEO_DEMO = {
   sbs: `${BASE}/videos/${VIDEO_ID}-sbs.mp4`,
 };
 
-const VIDEO_OUTPUTS = [
+const _VIDEO_OUTPUTS = [
   { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500" },
   { key: "stereogram", label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500" },
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
@@ -74,7 +74,7 @@ interface OnboardingFlowProps {
 
 export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlowProps) {
   const [gallery, setGallery] = useState<{ items: { url: string; label: string }[]; index: number } | null>(null);
-  const [videoTab, setVideoTab] = useState<"anaglyph" | "stereogram" | "sbs">("anaglyph");
+  const [_videoTab, _setVideoTab] = useState<"anaglyph" | "stereogram" | "sbs">("anaglyph");
 
   const openGallery = useCallback((items: { url: string; label: string }[], index: number) => {
     setGallery({ items, index });
