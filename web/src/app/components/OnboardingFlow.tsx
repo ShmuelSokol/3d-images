@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
 const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
@@ -23,10 +23,10 @@ const OUTPUTS = [
   { key: "sbs", label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500", wide: true },
 ];
 
-const VIDEO_DEMO = {
+const VIDEO_DEMO: Record<string, string | null> = {
   original: `${BASE}/originals/1773859284614-demo-video.mp4`,
   anaglyph: `${BASE}/videos/${VIDEO_ID}-anaglyph.mp4`,
-  stereogram: `${BASE}/videos/${VIDEO_ID}-stereogram.mp4`,
+  stereogram: null, // Too large for Supabase free tier (65MB); will work once compression fix deploys
   sbs: `${BASE}/videos/${VIDEO_ID}-sbs.mp4`,
 };
 
@@ -60,6 +60,95 @@ const MORE_GALLERIES = MORE_EXAMPLES.map((ex) => [
   { url: ex.original, label: `${ex.label} — Original` },
   ...ex.outputs.map((o) => ({ url: o.url, label: `${ex.label} — ${o.label}` })),
 ]);
+
+const VIDEO_FORMATS = [
+  { key: "anaglyph" as const, label: "Anaglyph 3D", desc: "Red/cyan glasses", color: "from-red-500 to-cyan-500" },
+  { key: "stereogram" as const, label: "Magic Eye", desc: "Autostereogram", color: "from-green-500 to-purple-500" },
+  { key: "sbs" as const, label: "Side-by-Side", desc: "Cross-eye 3D", color: "from-cyan-500 to-blue-500" },
+].filter((f) => VIDEO_DEMO[f.key]); // Only show formats that have a video URL
+
+function VideoDemo() {
+  const [activeFormat, setActiveFormat] = useState(0);
+  const originalRef = useRef<HTMLVideoElement>(null);
+  const outputRef = useRef<HTMLVideoElement>(null);
+
+  // Sync output video time with original when switching tabs
+  useEffect(() => {
+    if (originalRef.current && outputRef.current) {
+      outputRef.current.currentTime = originalRef.current.currentTime;
+    }
+  }, [activeFormat]);
+
+  const fmt = VIDEO_FORMATS[activeFormat];
+
+  return (
+    <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-8">
+      <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Video Demo</p>
+
+      {/* Format tabs */}
+      <div className="flex justify-center gap-2 mb-4">
+        {VIDEO_FORMATS.map((f, i) => (
+          <button
+            key={f.key}
+            onClick={() => setActiveFormat(i)}
+            className={`px-3 py-1.5 rounded-lg text-[11px] font-medium transition-all ${
+              i === activeFormat
+                ? "bg-white/10 text-white border border-white/20"
+                : "text-gray-500 hover:text-gray-300 border border-transparent"
+            }`}
+          >
+            <span className={i === activeFormat ? `bg-gradient-to-r ${f.color} bg-clip-text text-transparent` : ""}>
+              {f.label}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Side-by-side: original on left, 3D on right */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {/* Original video */}
+        <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+          <video
+            ref={originalRef}
+            src={VIDEO_DEMO.original || undefined}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="w-full aspect-video object-cover"
+          />
+          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
+            <span className="text-xs font-semibold text-white/90">Original Video</span>
+          </div>
+        </div>
+
+        {/* 3D output video */}
+        <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
+          <video
+            ref={outputRef}
+            key={fmt.key}
+            src={VIDEO_DEMO[fmt.key] || undefined}
+            autoPlay
+            loop
+            muted
+            playsInline
+            className="w-full aspect-video object-cover"
+          />
+          <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
+            <span className={`text-xs font-semibold bg-gradient-to-r ${fmt.color} bg-clip-text text-transparent`}>
+              {fmt.label}
+            </span>
+            <span className="text-[9px] text-white/40 ml-1.5">{fmt.desc}</span>
+          </div>
+        </div>
+      </div>
+
+      <p className="text-[10px] text-gray-600 text-center mt-3">
+        Niagara Falls &middot; 50 seconds &middot; Upload any video and get 3D output in multiple formats
+      </p>
+    </div>
+  );
+}
 
 interface OnboardingFlowProps {
   onGetStarted: () => void;
@@ -297,48 +386,7 @@ export default function OnboardingFlow({ onGetStarted, onClose }: OnboardingFlow
       </div>
 
       {/* Video demo */}
-      <div className="bg-gray-900/40 backdrop-blur-sm border border-gray-800/30 rounded-2xl p-4 sm:p-6 mb-8">
-        <p className="text-xs text-gray-500 text-center mb-4 tracking-wide uppercase font-medium">Video Demo</p>
-
-        {/* Side-by-side: original on left, 3D on right */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {/* Original video */}
-          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-            <video
-              src={VIDEO_DEMO.original}
-              autoPlay
-              loop
-              muted
-              playsInline
-              className="w-full aspect-video object-cover"
-            />
-            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/70 to-transparent px-3 py-2">
-              <span className="text-xs font-semibold text-white/90">Original Video</span>
-            </div>
-          </div>
-
-          {/* 3D Anaglyph video */}
-          <div className="relative rounded-xl overflow-hidden border border-gray-700/50">
-            <video
-              src={VIDEO_DEMO.anaglyph}
-              autoPlay
-              loop
-              muted
-              playsInline
-              className="w-full aspect-video object-cover"
-            />
-            <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-3 py-2">
-              <span className="text-xs font-semibold bg-gradient-to-r from-red-500 to-cyan-500 bg-clip-text text-transparent">
-                Anaglyph 3D
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <p className="text-[10px] text-gray-600 text-center mt-3">
-          Niagara Falls &middot; 50 seconds &middot; Upload any video and get 3D output
-        </p>
-      </div>
+      <VideoDemo />
 
       {/* More examples — original + all outputs */}
       <div className="mb-8">
