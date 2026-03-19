@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { getUserId, getSessionId, createAuthToken, AUTH_COOKIE } from "@/lib/session";
+import { rateLimit } from "@/lib/rate-limit";
 
 /**
  * GET /api/auth — check current auth state
@@ -24,6 +25,13 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   try {
+    // Rate limit: 10 auth attempts per IP per minute
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
+    const { allowed } = rateLimit(`auth:${ip}`, 10, 60_000);
+    if (!allowed) {
+      return NextResponse.json({ error: "Too many attempts. Try again in a minute." }, { status: 429 });
+    }
+
     const { action, email, password } = await req.json();
 
     if (!email || !password) {

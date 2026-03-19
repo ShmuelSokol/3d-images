@@ -36,6 +36,12 @@ export async function POST(req: NextRequest) {
           quantity: 1,
         },
       ],
+      payment_intent_data: {
+        receipt_email: user.email,
+      },
+      invoice_creation: {
+        enabled: true,
+      },
       metadata: { userId },
       success_url: `${origin}?payment=success`,
       cancel_url: `${origin}?payment=cancelled`,

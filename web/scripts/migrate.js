@@ -58,6 +58,20 @@ async function main() {
       status TEXT NOT NULL DEFAULT 'pending',
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+    // Video format selection (2026-03-19)
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS formats TEXT NOT NULL DEFAULT 'anaglyph,stereogram,sbs'`,
+    // Support tickets (2026-03-18)
+    `CREATE TABLE IF NOT EXISTS td_ticket (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      "userId" TEXT,
+      "adminNote" TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )`,
   ];
 
   for (const sql of statements) {

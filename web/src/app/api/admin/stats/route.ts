@@ -36,8 +36,24 @@ export async function GET(req: NextRequest) {
       select: {
         id: true,
         email: true,
+        imageCredits: true,
         createdAt: true,
-        _count: { select: { images: true } },
+        _count: { select: { images: true, payments: true } },
+      },
+    });
+
+    // All payments
+    const allPayments = await prisma.payment.findMany({
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        userId: true,
+        stripeSessionId: true,
+        amount: true,
+        credits: true,
+        status: true,
+        createdAt: true,
+        user: { select: { email: true } },
       },
     });
 
@@ -68,6 +84,43 @@ export async function GET(req: NextRequest) {
       dailyData.push({ date: key, count: dailyCounts[key] || 0 });
     }
 
+    // Daily revenue data (last 30 days)
+    const dailyRevenue: Record<string, number> = {};
+    for (const p of allPayments) {
+      if (p.status === "completed") {
+        const day = p.createdAt.toISOString().slice(0, 10);
+        dailyRevenue[day] = (dailyRevenue[day] || 0) + p.amount;
+      }
+    }
+    const revenueData: { date: string; revenue: number }[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      revenueData.push({ date: key, revenue: (dailyRevenue[key] || 0) / 100 });
+    }
+
+    // Active/processing jobs for queue monitor
+    const activeJobs = allJobs
+      .filter((j) => j.status === "processing" || j.status === "pending")
+      .map((j) => ({
+        ...j,
+        // Include frame progress for videos
+      }));
+
+    // Get frame progress for active video jobs
+    const activeVideoIds = activeJobs.filter(j => j.mediaType === "video").map(j => j.id);
+    const activeVideos = activeVideoIds.length > 0
+      ? await prisma.image.findMany({
+          where: { id: { in: activeVideoIds } },
+          select: { id: true, frameCount: true, framesDone: true, startedAt: true },
+        })
+      : [];
+    const videoProgressMap: Record<string, { frameCount: number | null; framesDone: number; startedAt: Date | null }> = {};
+    for (const v of activeVideos) {
+      videoProgressMap[v.id] = { frameCount: v.frameCount, framesDone: v.framesDone, startedAt: v.startedAt };
+    }
+
     return NextResponse.json({
       totalJobs,
       totalUsers,
@@ -75,11 +128,29 @@ export async function GET(req: NextRequest) {
       statusCounts,
       typeCounts,
       dailyData,
+      revenueData,
+      queueJobs: activeJobs.map((j) => ({
+        ...j,
+        frameCount: videoProgressMap[j.id]?.frameCount ?? null,
+        framesDone: videoProgressMap[j.id]?.framesDone ?? 0,
+        startedAt: videoProgressMap[j.id]?.startedAt ?? null,
+      })),
       users: allUsers.map((u) => ({
         id: u.id,
         email: u.email,
+        credits: u.imageCredits,
         createdAt: u.createdAt,
         jobCount: u._count.images,
+        paymentCount: u._count.payments,
+      })),
+      payments: allPayments.map((p) => ({
+        id: p.id,
+        email: p.user.email,
+        amount: p.amount,
+        credits: p.credits,
+        status: p.status,
+        stripeSessionId: p.stripeSessionId,
+        createdAt: p.createdAt,
       })),
       recentJobs: allJobs.slice(0, 100),
     }, {

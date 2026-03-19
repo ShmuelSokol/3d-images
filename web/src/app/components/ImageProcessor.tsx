@@ -138,6 +138,8 @@ export default function ImageProcessor() {
   const [couponError, setCouponError] = useState("");
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [videoFormats, setVideoFormats] = useState({ anaglyph: true, stereogram: true, sbs: true });
+  const [pendingVideoFile, setPendingVideoFile] = useState<{ file: File; duration: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -217,27 +219,73 @@ export default function ImageProcessor() {
   }, [jobs, selectedId, fetchAllJobs, fetchSingleJob]);
 
   // ── Upload ──
+  const uploadFile = useCallback(async (file: File, formats?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("intensity", intensity.toString());
+    fd.append("colorMode", colorMode);
+    fd.append("fillOcclusion", fillOcclusion.toString());
+    if (formats) fd.append("formats", formats);
+
+    const res = await fetch("/api/jobs", { method: "POST", body: fd });
+    if (res.ok) {
+      const job = await res.json();
+      setJobs((prev) => [job, ...prev]);
+      setSelectedId((prev) => prev ?? job.id);
+      return true;
+    } else if (res.status === 403) {
+      const data = await res.json();
+      setShowUpgrade(true);
+      alert(data.error || "Usage limit reached");
+      return false;
+    }
+    return true;
+  }, [intensity, colorMode, fillOcclusion]);
+
   const handleFiles = useCallback(async (files: FileList | File[]) => {
+    const fileArr = Array.from(files);
+
+    // Check if any file is a video — show format picker before uploading
+    const videoFile = fileArr.find(f => f.type.startsWith("video/"));
+    if (videoFile) {
+      // Get video duration client-side
+      const url = URL.createObjectURL(videoFile);
+      const video = document.createElement("video");
+      video.preload = "metadata";
+      video.src = url;
+      video.onloadedmetadata = () => {
+        const dur = Math.min(video.duration, 60);
+        URL.revokeObjectURL(url);
+        setPendingVideoFile({ file: videoFile, duration: dur });
+      };
+      video.onerror = () => {
+        URL.revokeObjectURL(url);
+        // Can't detect duration, just proceed with default
+        setPendingVideoFile({ file: videoFile, duration: 60 });
+      };
+      // Upload non-video files immediately
+      const imageFiles = fileArr.filter(f => !f.type.startsWith("video/"));
+      if (imageFiles.length > 0) {
+        setUploading(true);
+        try {
+          for (const f of imageFiles) {
+            const ok = await uploadFile(f);
+            if (!ok) break;
+          }
+        } finally {
+          setUploading(false);
+          fetchCredits();
+        }
+      }
+      return;
+    }
+
+    // Images only — upload directly
     setUploading(true);
     try {
-      for (const f of Array.from(files)) {
-        const fd = new FormData();
-        fd.append("file", f);
-        fd.append("intensity", intensity.toString());
-        fd.append("colorMode", colorMode);
-        fd.append("fillOcclusion", fillOcclusion.toString());
-
-        const res = await fetch("/api/jobs", { method: "POST", body: fd });
-        if (res.ok) {
-          const job = await res.json();
-          setJobs((prev) => [job, ...prev]);
-          setSelectedId((prev) => prev ?? job.id);
-        } else if (res.status === 403) {
-          const data = await res.json();
-          setShowUpgrade(true);
-          alert(data.error || "Usage limit reached");
-          break;
-        }
+      for (const f of fileArr) {
+        const ok = await uploadFile(f);
+        if (!ok) break;
       }
     } catch (err) {
       console.error("Upload failed:", err);
@@ -245,7 +293,24 @@ export default function ImageProcessor() {
       setUploading(false);
       fetchCredits();
     }
-  }, [intensity, colorMode, fillOcclusion, fetchCredits]);
+  }, [uploadFile, fetchCredits]);
+
+  // Confirm video upload with selected formats
+  const confirmVideoUpload = useCallback(async () => {
+    if (!pendingVideoFile) return;
+    const formats = Object.entries(videoFormats).filter(([, v]) => v).map(([k]) => k).join(",");
+    if (!formats) { alert("Select at least one format"); return; }
+    setUploading(true);
+    setPendingVideoFile(null);
+    try {
+      await uploadFile(pendingVideoFile.file, formats);
+    } catch (err) {
+      console.error("Upload failed:", err);
+    } finally {
+      setUploading(false);
+      fetchCredits();
+    }
+  }, [pendingVideoFile, videoFormats, uploadFile, fetchCredits]);
 
   const handleDelete = useCallback((id: string) => {
     setJobs((prev) => prev.filter((j) => j.id !== id));
@@ -268,6 +333,74 @@ export default function ImageProcessor() {
       /* ignore */
     }
   }, []);
+
+  // ── Google Sign-In ──
+  const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showAuth || user) return;
+
+    const clientId = process.env["NEXT_PUBLIC_GOOGLE_CLIENT_ID"];
+    if (!clientId) return;
+
+    // Load Google GSI script
+    const existing = document.getElementById("google-gsi");
+    if (!existing) {
+      const script = document.createElement("script");
+      script.id = "google-gsi";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+      script.onload = initGoogle;
+    } else {
+      initGoogle();
+    }
+
+    function initGoogle() {
+      if (!(window as unknown as Record<string, unknown>).google) return;
+      const g = (window as unknown as { google: { accounts: { id: { initialize: (opts: Record<string, unknown>) => void; renderButton: (el: HTMLElement, opts: Record<string, unknown>) => void } } } }).google;
+      g.accounts.id.initialize({
+        client_id: clientId,
+        callback: handleGoogleResponse,
+      });
+      if (googleBtnRef.current) {
+        googleBtnRef.current.innerHTML = "";
+        g.accounts.id.renderButton(googleBtnRef.current, {
+          theme: "filled_black",
+          size: "large",
+          width: "100%",
+          text: "signin_with",
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAuth, user]);
+
+  async function handleGoogleResponse(response: { credential: string }) {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const res = await fetch("/api/auth/google", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: response.credential }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setAuthError(data.error || "Google sign-in failed");
+        return;
+      }
+      setUser(data.user);
+      setShowAuth(false);
+      fetchAllJobs();
+      fetchCredits();
+    } catch {
+      setAuthError("Network error");
+    } finally {
+      setAuthLoading(false);
+    }
+  }
 
   // ── Auth ──
   async function handleAuth(action: "login" | "register") {
@@ -571,6 +704,13 @@ export default function ImageProcessor() {
         </div>
         {showAuth && !user && (
           <div className="max-w-xs mx-auto mt-3 bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
+            {/* Google Sign-In */}
+            <div ref={googleBtnRef} className="flex justify-center" />
+            <div className="flex items-center gap-2 text-gray-600 text-[10px]">
+              <div className="flex-1 border-t border-gray-700" />
+              or
+              <div className="flex-1 border-t border-gray-700" />
+            </div>
             <input
               type="email"
               placeholder="Email"
@@ -720,6 +860,81 @@ export default function ImageProcessor() {
             onClose={showOnboarding ? () => setShowOnboarding(false) : undefined}
           />
         </Suspense>
+      )}
+
+      {/* Video format picker modal */}
+      {pendingVideoFile && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setPendingVideoFile(null)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-semibold text-white">Video Processing Options</h3>
+            <p className="text-sm text-gray-400">
+              <span className="text-gray-200 font-medium">{pendingVideoFile.file.name}</span>
+              {" "}&middot; {Math.round(pendingVideoFile.duration)}s at 15fps = {Math.ceil(pendingVideoFile.duration * 15)} frames
+            </p>
+
+            <div className="space-y-2">
+              <p className="text-xs text-gray-500 font-medium uppercase tracking-wider">Output Formats</p>
+              {([
+                { key: "anaglyph", label: "Anaglyph 3D", desc: "Red/cyan glasses" },
+                { key: "stereogram", label: "Magic Eye", desc: "Autostereogram" },
+                { key: "sbs", label: "Side-by-Side", desc: "VR / cross-eye" },
+              ] as const).map(({ key, label, desc }) => (
+                <label key={key} className="flex items-center gap-3 p-3 rounded-lg bg-gray-800/50 border border-gray-700/50 cursor-pointer hover:border-gray-600 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={videoFormats[key]}
+                    onChange={(e) => setVideoFormats(prev => ({ ...prev, [key]: e.target.checked }))}
+                    className="accent-cyan-500 rounded w-4 h-4"
+                  />
+                  <div>
+                    <span className="text-sm text-gray-200">{label}</span>
+                    <span className="text-xs text-gray-500 ml-2">{desc}</span>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            {/* Time estimate */}
+            {(() => {
+              const frames = Math.ceil(pendingVideoFile.duration * 15);
+              const formatCount = Object.values(videoFormats).filter(Boolean).length;
+              if (formatCount === 0) return null;
+              // ~25s base (depth) + ~5s per format per frame
+              const secPerFrame = 25 + formatCount * 5;
+              const totalSec = frames * secPerFrame;
+              const hours = Math.floor(totalSec / 3600);
+              const mins = Math.floor((totalSec % 3600) / 60);
+              const timeStr = hours > 0 ? `~${hours}h ${mins}m` : `~${mins}m`;
+              return (
+                <div className="bg-gray-800 rounded-lg p-3 text-sm">
+                  <div className="flex justify-between text-gray-300">
+                    <span>Estimated time</span>
+                    <span className="text-cyan-400 font-medium">{timeStr}</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    {frames} frames &times; {formatCount} format{formatCount > 1 ? "s" : ""} &middot; Processing happens on our server
+                  </p>
+                </div>
+              );
+            })()}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setPendingVideoFile(null)}
+                className="flex-1 py-2.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmVideoUpload}
+                disabled={!Object.values(videoFormats).some(Boolean)}
+                className="flex-1 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 rounded-lg text-sm font-medium text-white transition-colors"
+              >
+                Start Processing
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Upload */}

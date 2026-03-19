@@ -63,10 +63,17 @@ async function main() {
         return { data: out, width: r.predicted_depth.dims[1], height: r.predicted_depth.dims[0] };
       }
 
+      // Handle SIGTERM — finish current frame, save progress, exit
+      let shutdownRequested = false;
+      process.on("SIGTERM", () => {
+        console.log("[worker] SIGTERM received, will exit after current frame");
+        shutdownRequested = true;
+      });
+
       if (job.mediaType === "video") {
         // Video processing — import server-video logic inline
         const { execSync } = require("child_process");
-        const { mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync } = require("fs");
+        const { mkdirSync, rmSync, readdirSync, readFileSync, writeFileSync, existsSync } = require("fs");
         const { join } = require("path");
 
         const TMP_DIR = "/tmp/3d-jobs";
@@ -79,6 +86,14 @@ async function main() {
         const anaglyphPath = join(jobDir, "output-anaglyph.mp4");
         const stereoPath = join(jobDir, "output-stereo.mp4");
         const sbsPath = join(jobDir, "output-sbs.mp4");
+
+        const FRAME_PREFIX = `frames/${jobId}`;
+        const resumeFrom = job.framesDone || 0;
+        const selectedFormats = (job.formats || "anaglyph,stereogram,sbs").split(",");
+        const doAnaglyph = selectedFormats.includes("anaglyph");
+        const doStereo = selectedFormats.includes("stereogram");
+        const doSbs = selectedFormats.includes("sbs");
+        console.log(`[worker] Selected formats: ${selectedFormats.join(", ")}`);
 
         try {
           mkdirSync(framesDir, { recursive: true });
@@ -110,7 +125,38 @@ async function main() {
           execSync(`ffmpeg -y -i "${inputPath}" -t ${duration} -vf "fps=${fps},scale='min(720,iw)':'min(720,ih)':force_original_aspect_ratio=decrease,pad=ceil(iw/2)*2:ceil(ih/2)*2" -q:v 2 "${framesDir}/frame-%04d.jpg"`, { stdio: "pipe" });
 
           const frameFiles = readdirSync(framesDir).sort();
-          console.log(`[worker] Processing ${frameFiles.length} frames`);
+          console.log(`[worker] Processing ${frameFiles.length} frames (resuming from frame ${resumeFrom})`);
+
+          // Resume: download already-processed frames from Supabase
+          if (resumeFrom > 0) {
+            console.log(`[worker] Downloading ${resumeFrom} previously processed frames from Supabase...`);
+            for (let i = 0; i < resumeFrom; i++) {
+              const pad = String(i + 1).padStart(4, "0");
+              try {
+                const downloads = [];
+                if (doAnaglyph) downloads.push({ key: "anaglyph", dir: outAnaglyph, remote: `${FRAME_PREFIX}/anaglyph-${pad}.png` });
+                if (doStereo) downloads.push({ key: "stereo", dir: outStereo, remote: `${FRAME_PREFIX}/stereo-${pad}.png` });
+                if (doSbs) downloads.push({ key: "sbs", dir: outSbs, remote: `${FRAME_PREFIX}/sbs-${pad}.png` });
+
+                const results = await Promise.all(downloads.map(d => supabase.storage.from("3d-images").download(d.remote)));
+                let failed = false;
+                for (let r = 0; r < results.length; r++) {
+                  if (results[r].error) { failed = true; break; }
+                  writeFileSync(join(downloads[r].dir, `frame-${pad}.png`), Buffer.from(await results[r].data.arrayBuffer()));
+                }
+                if (failed) {
+                  console.error(`[worker] Missing resume frame ${i + 1}, reprocessing from here`);
+                  await prisma.image.update({ where: { id: jobId }, data: { framesDone: i } });
+                  break;
+                }
+              } catch (dlErr) {
+                console.error(`[worker] Error downloading resume frame ${i + 1}:`, dlErr.message);
+                await prisma.image.update({ where: { id: jobId }, data: { framesDone: i } });
+                break;
+              }
+            }
+            console.log(`[worker] Resume frames downloaded, continuing from frame ${resumeFrom}`);
+          }
 
           // Get frame dimensions
           const firstFrame = Buffer.from(readFileSync(join(framesDir, frameFiles[0])));
@@ -118,7 +164,18 @@ async function main() {
           const frameW = firstInfo.width;
           const frameH = firstInfo.height;
 
-          for (let i = 0; i < frameFiles.length; i++) {
+          // Get actual resume point (may have been adjusted if downloads failed)
+          const actualResume = (await prisma.image.findUnique({ where: { id: jobId }, select: { framesDone: true } }))?.framesDone || 0;
+
+          for (let i = actualResume; i < frameFiles.length; i++) {
+            // Check for shutdown request between frames
+            if (shutdownRequested) {
+              console.log(`[worker] Shutdown requested, saving progress at frame ${i}`);
+              await prisma.image.update({ where: { id: jobId }, data: { framesDone: i } });
+              process.exit(0);
+              return;
+            }
+
             if (i % 3 === 0) {
               const check = await prisma.image.findUnique({ where: { id: jobId }, select: { status: true } });
               if (check?.status === "cancelled") throw new Error("Job cancelled by user");
@@ -131,39 +188,50 @@ async function main() {
             const { data: rawData, info: rawInfo } = await sharp(frameBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
             const rawImg = { data: rawData, width: rawInfo.width, height: rawInfo.height };
 
-            // Generate all 3 formats
-            const anaglyph = generateAnaglyphServer(rawImg, depth.data, depth.width, depth.height, job.intensity, job.colorMode === "classic" ? "classic" : "dubois", job.fillOcclusion);
-            const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, frameW, frameH);
-            const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
-
+            // Generate selected formats only
             const pad = String(i + 1).padStart(4, "0");
-            const [anaPng, sterPng, sbsPng] = await Promise.all([
-              sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer(),
-              sharp(stereogram.data, { raw: { width: stereogram.width, height: stereogram.height, channels: 4 } }).png().toBuffer(),
-              sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).png().toBuffer(),
-            ]);
-            writeFileSync(join(outAnaglyph, `frame-${pad}.png`), anaPng);
-            writeFileSync(join(outStereo, `frame-${pad}.png`), sterPng);
-            writeFileSync(join(outSbs, `frame-${pad}.png`), sbsPng);
+            const backupUploads = [];
+
+            if (doAnaglyph) {
+              const anaglyph = generateAnaglyphServer(rawImg, depth.data, depth.width, depth.height, job.intensity, job.colorMode === "classic" ? "classic" : "dubois", job.fillOcclusion);
+              const anaPng = await sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer();
+              writeFileSync(join(outAnaglyph, `frame-${pad}.png`), anaPng);
+              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/anaglyph-${pad}.png`, anaPng, { contentType: "image/png", upsert: true }));
+            }
+            if (doStereo) {
+              const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, frameW, frameH);
+              const sterPng = await sharp(stereogram.data, { raw: { width: stereogram.width, height: stereogram.height, channels: 4 } }).png().toBuffer();
+              writeFileSync(join(outStereo, `frame-${pad}.png`), sterPng);
+              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/stereo-${pad}.png`, sterPng, { contentType: "image/png", upsert: true }));
+            }
+            if (doSbs) {
+              const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
+              const sbsPng = await sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).png().toBuffer();
+              writeFileSync(join(outSbs, `frame-${pad}.png`), sbsPng);
+              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/sbs-${pad}.png`, sbsPng, { contentType: "image/png", upsert: true }));
+            }
+
+            // Upload frames to Supabase for resume capability (fire-and-forget)
+            Promise.all(backupUploads).catch(err => console.error(`[worker] Frame ${i + 1} backup upload failed:`, err.message));
 
             if (i % 5 === 0 || i === frameFiles.length - 1) {
               await prisma.image.update({ where: { id: jobId }, data: { framesDone: i + 1 } });
             }
           }
 
-          // Reassemble 3 videos
-          console.log(`[worker] Reassembling 3 videos`);
+          // Reassemble selected videos
+          const formatCount = [doAnaglyph, doStereo, doSbs].filter(Boolean).length;
+          console.log(`[worker] Reassembling ${formatCount} video(s)`);
           const ffmpegCmd = (inDir, outPath, crf = 23) => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf ${crf} -shortest -movflags +faststart "${outPath}"`;
-          execSync(ffmpegCmd(outAnaglyph, anaglyphPath, 23), { stdio: "pipe" });
-          execSync(ffmpegCmd(outStereo, stereoPath, 28), { stdio: "pipe" });
-          execSync(ffmpegCmd(outSbs, sbsPath, 23), { stdio: "pipe" });
+          if (doAnaglyph) execSync(ffmpegCmd(outAnaglyph, anaglyphPath, 23), { stdio: "pipe" });
+          if (doStereo) execSync(ffmpegCmd(outStereo, stereoPath, 28), { stdio: "pipe" });
+          if (doSbs) execSync(ffmpegCmd(outSbs, sbsPath, 23), { stdio: "pipe" });
 
-          // Upload all 3 — don't fail the whole job if one upload fails
-          const uploadList = [
-            { local: anaglyphPath, remote: `videos/${jobId}-anaglyph.mp4`, field: "videoUrl" },
-            { local: stereoPath, remote: `videos/${jobId}-stereogram.mp4`, field: "stereogramUrl" },
-            { local: sbsPath, remote: `videos/${jobId}-sbs.mp4`, field: "sbsUrl" },
-          ];
+          // Upload selected videos — don't fail the whole job if one upload fails
+          const uploadList = [];
+          if (doAnaglyph) uploadList.push({ local: anaglyphPath, remote: `videos/${jobId}-anaglyph.mp4`, field: "videoUrl" });
+          if (doStereo) uploadList.push({ local: stereoPath, remote: `videos/${jobId}-stereogram.mp4`, field: "stereogramUrl" });
+          if (doSbs) uploadList.push({ local: sbsPath, remote: `videos/${jobId}-sbs.mp4`, field: "sbsUrl" });
           const updateData = { status: "done", framesDone: totalFrames };
           for (const u of uploadList) {
             try {
@@ -183,8 +251,24 @@ async function main() {
 
           await prisma.image.update({ where: { id: jobId }, data: updateData });
           console.log(`[worker] Video done: ${jobId}`);
-          // Only clean up on success
+
+          // Clean up: local temp files
           try { rmSync(jobDir, { recursive: true, force: true }); } catch {}
+
+          // Clean up: intermediate frames from Supabase
+          try {
+            const { data: storedFrames } = await supabase.storage.from("3d-images").list(FRAME_PREFIX);
+            if (storedFrames && storedFrames.length > 0) {
+              // Supabase remove takes max 100 at a time
+              const paths = storedFrames.map(f => `${FRAME_PREFIX}/${f.name}`);
+              for (let b = 0; b < paths.length; b += 100) {
+                await supabase.storage.from("3d-images").remove(paths.slice(b, b + 100));
+              }
+              console.log(`[worker] Cleaned up ${paths.length} intermediate frames from Supabase`);
+            }
+          } catch (cleanErr) {
+            console.error(`[worker] Frame cleanup from Supabase failed:`, cleanErr.message);
+          }
         } catch (videoErr) {
           // On error, keep temp files for debugging — log the path
           console.error(`[worker] Video processing failed, temp files kept at: ${jobDir}`);

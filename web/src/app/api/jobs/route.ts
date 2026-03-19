@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
     const intensity = parseFloat(formData.get("intensity") as string) || 10;
     const colorMode = (formData.get("colorMode") as string) || "dubois";
     const fillOcclusion = (formData.get("fillOcclusion") as string) !== "false";
+    const formats = (formData.get("formats") as string) || "anaglyph,stereogram,sbs";
     const isVideo = file.type.startsWith("video/");
     const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -98,6 +99,7 @@ export async function POST(req: NextRequest) {
         intensity,
         colorMode,
         fillOcclusion,
+        formats: isVideo ? formats : "anaglyph,stereogram,sbs",
         status: "pending",
         mediaType: isVideo ? "video" : "image",
         sessionId,

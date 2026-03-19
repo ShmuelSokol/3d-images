@@ -45,6 +45,7 @@ model Image {
   duration    Float?
   frameCount  Int?
   framesDone  Int      @default(0)
+  formats      String   @default("anaglyph,stereogram,sbs")
   startedAt    DateTime?
   processingMs Int?
   sessionId   String?
@@ -92,4 +93,18 @@ model Payment {
   createdAt       DateTime @default(now())
 
   @@map("td_payment")
+}
+
+model Ticket {
+  id        String   @id @default(cuid())
+  email     String
+  subject   String
+  message   String
+  status    String   @default("open")
+  userId    String?
+  adminNote String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("td_ticket")
 }

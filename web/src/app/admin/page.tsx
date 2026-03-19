@@ -13,7 +13,19 @@ interface Stats {
   statusCounts: Record<string, number>;
   typeCounts: Record<string, number>;
   dailyData: { date: string; count: number }[];
-  users: { id: string; email: string; createdAt: string; jobCount: number }[];
+  revenueData: { date: string; revenue: number }[];
+  queueJobs: {
+    id: string;
+    fileName: string;
+    status: string;
+    mediaType: string;
+    frameCount: number | null;
+    framesDone: number;
+    startedAt: string | null;
+    createdAt: string;
+  }[];
+  users: { id: string; email: string; credits: number; createdAt: string; jobCount: number; paymentCount: number }[];
+  payments: { id: string; email: string; amount: number; credits: number; status: string; stripeSessionId: string; createdAt: string }[];
   recentJobs: {
     id: string;
     fileName: string;
@@ -46,8 +58,9 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
-  const [tab, setTab] = useState<"generator" | "overview" | "users" | "activity" | "coupons">("generator");
+  const [tab, setTab] = useState<"generator" | "overview" | "users" | "payments" | "queue" | "activity" | "coupons" | "tickets">("generator");
   const [coupons, setCoupons] = useState<{ id: string; code: string; credits: number; maxRedemptions: number; timesRedeemed: number; expiresAt: string | null; createdAt: string; redemptions: { id: string; createdAt: string; user: { email: string } }[] }[]>([]);
+  const [tickets, setTickets] = useState<{ id: string; email: string; subject: string; message: string; status: string; adminNote: string | null; createdAt: string }[]>([]);
   const [newCouponCode, setNewCouponCode] = useState("");
   const [newCouponCredits, setNewCouponCredits] = useState(100);
   const [newCouponMax, setNewCouponMax] = useState(1);
@@ -78,6 +91,16 @@ export default function AdminPage() {
     }
   }, []);
 
+  const loadTickets = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/tickets");
+      if (res.ok) {
+        const d = await res.json();
+        if (Array.isArray(d)) setTickets(d);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   const loadCoupons = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/coupons");
@@ -88,10 +111,18 @@ export default function AdminPage() {
     } catch { /* ignore */ }
   }, []);
 
-  // Load coupons when switching to coupons tab
+  // Auto-refresh queue tab every 10s
+  useEffect(() => {
+    if (tab !== "queue" || !authed) return;
+    const interval = setInterval(loadStats, 10_000);
+    return () => clearInterval(interval);
+  }, [tab, authed, loadStats]);
+
+  // Load coupons/tickets when switching to those tabs
   useEffect(() => {
     if (tab === "coupons" && authed) loadCoupons();
-  }, [tab, authed, loadCoupons]);
+    if (tab === "tickets" && authed) loadTickets();
+  }, [tab, authed, loadCoupons, loadTickets]);
 
   useEffect(() => {
     if (authed && tab !== "generator") loadStats();
@@ -185,7 +216,7 @@ export default function AdminPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-gray-900 rounded-lg p-1 w-fit">
-          {(["generator", "overview", "users", "activity", "coupons"] as const).map((t) => (
+          {(["generator", "overview", "users", "payments", "queue", "activity", "coupons", "tickets"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -206,28 +237,50 @@ export default function AdminPage() {
         )}
 
         {/* Admin Tabs (need stats) */}
-        {tab !== "generator" && tab !== "coupons" && !stats && (
+        {tab !== "generator" && tab !== "coupons" && tab !== "tickets" && !stats && (
           <div>
             <p className="text-gray-500">Loading stats...</p>
             {statsError && <p className="text-red-400 text-sm mt-2">{statsError}</p>}
           </div>
         )}
 
-        {tab !== "generator" && (stats || tab === "coupons") && (
+        {tab !== "generator" && (stats || tab === "coupons" || tab === "tickets") && (
           <>
             {/* Overview Tab */}
             {tab === "overview" && stats && (
               <div className="space-y-6">
                 {/* Stat cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <StatCard label="Total Uploads" value={stats.totalJobs} />
                   <StatCard label="Registered Users" value={stats.totalUsers} />
                   <StatCard label="Unique Sessions" value={stats.totalSessions} />
                   <StatCard label="Success Rate" value={`${stats.totalJobs > 0 ? Math.round(((stats.statusCounts.done || 0) / stats.totalJobs) * 100) : 0}%`} />
+                  <StatCard label="Total Revenue" value={`$${((stats.payments || []).filter(p => p.status === "completed").reduce((sum, p) => sum + p.amount, 0) / 100).toFixed(2)}`} />
                 </div>
 
                 {/* Charts */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Revenue over time */}
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 md:col-span-2">
+                    <h3 className="text-sm font-medium text-gray-400 mb-3">Revenue (Last 30 Days)</h3>
+                    <ResponsiveContainer width="100%" height={200}>
+                      <BarChart data={stats.revenueData}>
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fill: "#6b7280", fontSize: 10 }}
+                          tickFormatter={(v: string) => v.slice(5)}
+                        />
+                        <YAxis tick={{ fill: "#6b7280", fontSize: 10 }} tickFormatter={(v: number) => `$${v}`} />
+                        <Tooltip
+                          contentStyle={{ background: "#1f2937", border: "1px solid #374151", borderRadius: 8, fontSize: 12 }}
+                          labelStyle={{ color: "#9ca3af" }}
+                          formatter={(v) => [`$${Number(v).toFixed(2)}`, "Revenue"]}
+                        />
+                        <Bar dataKey="revenue" fill="#22c55e" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+
                   {/* Uploads over time */}
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                     <h3 className="text-sm font-medium text-gray-400 mb-3">Uploads (Last 30 Days)</h3>
@@ -341,36 +394,278 @@ export default function AdminPage() {
 
             {/* Users Tab */}
             {tab === "users" && stats && (
-              <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-800 text-left text-gray-500">
-                      <th className="px-4 py-3 font-medium">Email</th>
-                      <th className="px-4 py-3 font-medium">Uploads</th>
-                      <th className="px-4 py-3 font-medium">Registered</th>
-                      <th className="px-4 py-3 font-medium">User ID</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats.users.length === 0 ? (
-                      <tr><td colSpan={4} className="px-4 py-8 text-center text-gray-600">No registered users yet</td></tr>
-                    ) : (
-                      stats.users.map((u) => (
-                        <tr key={u.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
-                          <td className="px-4 py-3 text-gray-200">{u.email}</td>
-                          <td className="px-4 py-3 text-gray-400">{u.jobCount}</td>
-                          <td className="px-4 py-3 text-gray-400">{formatDate(u.createdAt)}</td>
-                          <td className="px-4 py-3 text-gray-600 font-mono text-xs">{u.id}</td>
+              <div className="space-y-4">
+                {/* Export button */}
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => {
+                      window.open("/api/admin/users?format=csv", "_blank");
+                    }}
+                    className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition-colors"
+                  >
+                    Export CSV
+                  </button>
+                </div>
+                <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-800 text-left text-gray-500">
+                          <th className="px-4 py-3 font-medium">Email</th>
+                          <th className="px-4 py-3 font-medium">Credits</th>
+                          <th className="px-4 py-3 font-medium">Uploads</th>
+                          <th className="px-4 py-3 font-medium">Payments</th>
+                          <th className="px-4 py-3 font-medium">Registered</th>
+                          <th className="px-4 py-3 font-medium">Actions</th>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-                {/* Anonymous sessions */}
-                <div className="border-t border-gray-800 px-4 py-3">
-                  <p className="text-xs text-gray-500">
-                    + {stats.totalSessions} anonymous session{stats.totalSessions !== 1 ? "s" : ""} (not registered)
-                  </p>
+                      </thead>
+                      <tbody>
+                        {stats.users.length === 0 ? (
+                          <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600">No registered users yet</td></tr>
+                        ) : (
+                          stats.users.map((u) => (
+                            <tr key={u.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                              <td className="px-4 py-3 text-gray-200">{u.email}</td>
+                              <td className="px-4 py-3">
+                                <span className={`font-medium ${u.credits <= 0 ? "text-red-400" : u.credits <= 5 ? "text-yellow-400" : "text-green-400"}`}>
+                                  {u.credits}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-gray-400">{u.jobCount}</td>
+                              <td className="px-4 py-3 text-gray-400">{u.paymentCount}</td>
+                              <td className="px-4 py-3 text-gray-400">{formatDate(u.createdAt)}</td>
+                              <td className="px-4 py-3">
+                                <div className="flex gap-2">
+                                  <button
+                                    onClick={async () => {
+                                      const amt = prompt(`Adjust credits for ${u.email}\nCurrent: ${u.credits}\n\nEnter amount (positive to add, negative to remove):`);
+                                      if (!amt) return;
+                                      const amount = parseInt(amt);
+                                      if (isNaN(amount)) return;
+                                      const reason = prompt("Reason (optional):") || "";
+                                      await fetch("/api/admin/users", {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ userId: u.id, action: "adjustCredits", amount, reason }),
+                                      });
+                                      loadStats();
+                                    }}
+                                    className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors"
+                                  >
+                                    Credits
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (!confirm(`Suspend ${u.email}? This will set their credits to 0.`)) return;
+                                      await fetch("/api/admin/users", {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ userId: u.id, action: "suspend" }),
+                                      });
+                                      loadStats();
+                                    }}
+                                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                                  >
+                                    Suspend
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* Anonymous sessions */}
+                  <div className="border-t border-gray-800 px-4 py-3">
+                    <p className="text-xs text-gray-500">
+                      + {stats.totalSessions} anonymous session{stats.totalSessions !== 1 ? "s" : ""} (not registered)
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Payments Tab */}
+            {tab === "payments" && stats && (
+              <div className="space-y-4">
+                {/* Revenue summary */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <StatCard
+                    label="Total Revenue"
+                    value={`$${((stats.payments || []).filter(p => p.status === "completed").reduce((sum, p) => sum + p.amount, 0) / 100).toFixed(2)}`}
+                  />
+                  <StatCard
+                    label="Completed Payments"
+                    value={(stats.payments || []).filter(p => p.status === "completed").length}
+                  />
+                  <StatCard
+                    label="Credits Sold"
+                    value={(stats.payments || []).filter(p => p.status === "completed").reduce((sum, p) => sum + p.credits, 0)}
+                  />
+                </div>
+
+                <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-800 text-left text-gray-500">
+                          <th className="px-4 py-3 font-medium">Date</th>
+                          <th className="px-4 py-3 font-medium">Email</th>
+                          <th className="px-4 py-3 font-medium">Amount</th>
+                          <th className="px-4 py-3 font-medium">Credits</th>
+                          <th className="px-4 py-3 font-medium">Status</th>
+                          <th className="px-4 py-3 font-medium">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(stats.payments || []).length === 0 ? (
+                          <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600">No payments yet</td></tr>
+                        ) : (
+                          (stats.payments || []).map((p) => (
+                            <tr key={p.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
+                              <td className="px-4 py-3 text-gray-400 whitespace-nowrap">{formatDate(p.createdAt)}</td>
+                              <td className="px-4 py-3 text-gray-200">{p.email}</td>
+                              <td className="px-4 py-3 text-green-400 font-medium">${(p.amount / 100).toFixed(2)}</td>
+                              <td className="px-4 py-3 text-gray-300">{p.credits}</td>
+                              <td className="px-4 py-3">
+                                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                  p.status === "completed" ? "bg-green-900/50 text-green-300" :
+                                  p.status === "refunded" ? "bg-red-900/50 text-red-300" :
+                                  "bg-yellow-900/50 text-yellow-300"
+                                }`}>
+                                  {p.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3">
+                                {p.status === "completed" && (
+                                  <button
+                                    onClick={async () => {
+                                      if (!confirm(`Refund $${(p.amount / 100).toFixed(2)} to ${p.email}? This will also deduct ${p.credits} credits.`)) return;
+                                      const reason = prompt("Reason (optional):") || "";
+                                      try {
+                                        const res = await fetch("/api/admin/refund", {
+                                          method: "POST",
+                                          headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ paymentId: p.id, reason }),
+                                        });
+                                        const data = await res.json();
+                                        if (!res.ok) {
+                                          alert(data.error || "Refund failed");
+                                          return;
+                                        }
+                                        alert("Refund issued successfully");
+                                        loadStats();
+                                      } catch {
+                                        alert("Network error");
+                                      }
+                                    }}
+                                    className="text-xs text-red-400 hover:text-red-300 transition-colors"
+                                  >
+                                    Refund
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Queue Tab */}
+            {tab === "queue" && stats && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Job Queue</h3>
+                  <button
+                    onClick={async () => {
+                      try {
+                        await fetch("/api/admin/kick", { method: "POST" });
+                        loadStats();
+                      } catch { /* ignore */ }
+                    }}
+                    className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Kick Queue
+                  </button>
+                </div>
+
+                {/* Active / processing jobs */}
+                {stats.queueJobs.length === 0 ? (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-600">
+                    No jobs in queue
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {stats.queueJobs.map((j) => {
+                      const isVideo = j.mediaType === "video";
+                      const progress = isVideo && j.frameCount
+                        ? Math.round((j.framesDone / j.frameCount) * 100)
+                        : null;
+                      const elapsed = j.startedAt
+                        ? Math.round((Date.now() - new Date(j.startedAt).getTime()) / 1000)
+                        : null;
+                      const eta = isVideo && j.frameCount && j.framesDone > 0 && elapsed
+                        ? Math.round(((j.frameCount - j.framesDone) / j.framesDone) * elapsed)
+                        : null;
+
+                      return (
+                        <div key={j.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-3">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                j.status === "processing" ? "bg-blue-900/50 text-blue-300" : "bg-yellow-900/50 text-yellow-300"
+                              }`}>
+                                {j.status}
+                              </span>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                j.mediaType === "video" ? "bg-purple-900/50 text-purple-300" : "bg-cyan-900/50 text-cyan-300"
+                              }`}>
+                                {j.mediaType}
+                              </span>
+                              <span className="text-sm text-gray-200 truncate max-w-[300px]">{j.fileName}</span>
+                            </div>
+                            <span className="text-xs text-gray-500 font-mono">{j.id.slice(0, 12)}...</span>
+                          </div>
+
+                          {isVideo && j.frameCount && (
+                            <div className="mt-3">
+                              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                <span>Frame {j.framesDone} / {j.frameCount}</span>
+                                <span>{progress}%</span>
+                              </div>
+                              <div className="w-full bg-gray-800 rounded-full h-2">
+                                <div
+                                  className="bg-cyan-500 h-2 rounded-full transition-all duration-500"
+                                  style={{ width: `${progress}%` }}
+                                />
+                              </div>
+                              <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                {elapsed !== null && <span>Elapsed: {formatDuration(elapsed)}</span>}
+                                {eta !== null && <span>ETA: {formatDuration(eta)}</span>}
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex justify-between text-xs text-gray-500 mt-2">
+                            <span>Created: {formatDate(j.createdAt)}</span>
+                            {j.startedAt && <span>Started: {formatDate(j.startedAt)}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Queue summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  <StatCard label="Processing" value={stats.queueJobs.filter(j => j.status === "processing").length} />
+                  <StatCard label="Pending" value={stats.queueJobs.filter(j => j.status === "pending").length} />
+                  <StatCard label="Total Done" value={stats.statusCounts.done || 0} />
                 </div>
               </div>
             )}
@@ -536,6 +831,103 @@ export default function AdminPage() {
                 </div>
               </div>
             )}
+            {/* Tickets Tab */}
+            {tab === "tickets" && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Support Tickets</h3>
+                  <div className="flex gap-2 text-xs text-gray-500">
+                    <span className="px-2 py-0.5 bg-yellow-900/50 text-yellow-300 rounded-full">
+                      {tickets.filter(t => t.status === "open").length} open
+                    </span>
+                    <span className="px-2 py-0.5 bg-green-900/50 text-green-300 rounded-full">
+                      {tickets.filter(t => t.status === "closed").length} closed
+                    </span>
+                  </div>
+                </div>
+
+                {tickets.length === 0 ? (
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-600">
+                    No tickets yet
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {tickets.map((t) => (
+                      <div key={t.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                t.status === "open" ? "bg-yellow-900/50 text-yellow-300" :
+                                t.status === "in-progress" ? "bg-blue-900/50 text-blue-300" :
+                                "bg-green-900/50 text-green-300"
+                              }`}>
+                                {t.status}
+                              </span>
+                              <span className="text-sm font-medium text-gray-200">{t.subject}</span>
+                            </div>
+                            <p className="text-xs text-gray-500">{t.email} &middot; {formatDate(t.createdAt)}</p>
+                          </div>
+                          <div className="flex gap-2">
+                            {t.status !== "closed" && (
+                              <button
+                                onClick={async () => {
+                                  await fetch("/api/admin/tickets", {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ ticketId: t.id, status: "closed" }),
+                                  });
+                                  loadTickets();
+                                }}
+                                className="text-xs text-green-400 hover:text-green-300 transition-colors"
+                              >
+                                Close
+                              </button>
+                            )}
+                            {t.status === "closed" && (
+                              <button
+                                onClick={async () => {
+                                  await fetch("/api/admin/tickets", {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ ticketId: t.id, status: "open" }),
+                                  });
+                                  loadTickets();
+                                }}
+                                className="text-xs text-yellow-400 hover:text-yellow-300 transition-colors"
+                              >
+                                Reopen
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-sm text-gray-300 whitespace-pre-wrap mt-2">{t.message}</p>
+                        {t.adminNote && (
+                          <div className="mt-3 bg-gray-800 rounded-lg p-3 text-xs text-gray-400">
+                            <span className="text-cyan-400 font-medium">Admin note:</span> {t.adminNote}
+                          </div>
+                        )}
+                        <button
+                          onClick={async () => {
+                            const note = prompt("Admin note:", t.adminNote || "");
+                            if (note === null) return;
+                            await fetch("/api/admin/tickets", {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ ticketId: t.id, adminNote: note }),
+                            });
+                            loadTickets();
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-400 mt-2 transition-colors"
+                        >
+                          {t.adminNote ? "Edit note" : "Add note"}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 
@@ -558,4 +950,12 @@ function formatDate(iso: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
     " " +
     d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return `${h}h ${m}m`;
 }
