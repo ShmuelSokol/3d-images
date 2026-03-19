@@ -167,6 +167,9 @@ async function main() {
           // Get actual resume point (may have been adjusted if downloads failed)
           const actualResume = (await prisma.image.findUnique({ where: { id: jobId }, select: { framesDone: true } }))?.framesDone || 0;
 
+          // For temporal stereogram: fixed base pattern across all frames
+          let stereoBasePattern = null;
+
           for (let i = actualResume; i < frameFiles.length; i++) {
             // Check for shutdown request between frames
             if (shutdownRequested) {
@@ -199,8 +202,9 @@ async function main() {
               backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/anaglyph-${pad}.png`, anaPng, { contentType: "image/png", upsert: true }));
             }
             if (doStereo) {
-              const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, frameW, frameH);
-              const sterPng = await sharp(stereogram.data, { raw: { width: stereogram.width, height: stereogram.height, channels: 4 } }).png().toBuffer();
+              const stereoResult = generateTemporalStereogram(depth.data, depth.width, depth.height, frameW, frameH, stereoBasePattern);
+              if (!stereoBasePattern) stereoBasePattern = stereoResult.basePattern;
+              const sterPng = await sharp(stereoResult.data, { raw: { width: stereoResult.width, height: stereoResult.height, channels: 4 } }).png().toBuffer();
               writeFileSync(join(outStereo, `frame-${pad}.png`), sterPng);
               backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/stereo-${pad}.png`, sterPng, { contentType: "image/png", upsert: true }));
             }
@@ -602,6 +606,64 @@ function generateSideBySide(image, depthData, dw, dh, intensity) {
     out[d1] = out[d2] = 60; out[d1+1] = out[d2+1] = 60; out[d1+2] = out[d2+2] = 60; out[d1+3] = out[d2+3] = 255;
   }
   return { data: out, width: outWidth, height };
+}
+
+/**
+ * Temporal stereogram — uses a FIXED base pattern across all frames.
+ * Pass basePattern=null on first frame, reuse returned pattern for subsequent frames.
+ */
+function generateTemporalStereogram(depthData, dw, dh, outputWidth, outputHeight, existingBasePattern) {
+  let minD = Infinity, maxD = -Infinity;
+  for (let i = 0; i < depthData.length; i++) {
+    if (depthData[i] < minD) minD = depthData[i];
+    if (depthData[i] > maxD) maxD = depthData[i];
+  }
+  const rangeD = maxD - minD || 1;
+  const normalized = new Float32Array(depthData.length);
+  for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
+
+  const stripWidth = Math.round(outputWidth / 7);
+  const maxShift = Math.round(stripWidth * 0.35);
+
+  let basePattern = existingBasePattern;
+  if (!basePattern) {
+    let seed = 42;
+    function rand() { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; }
+    basePattern = [];
+    for (let y = 0; y < outputHeight; y++) {
+      const row = [];
+      for (let x = 0; x < stripWidth; x++) {
+        row.push([Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)]);
+      }
+      basePattern.push(row);
+    }
+  }
+
+  const out = Buffer.alloc(outputWidth * outputHeight * 4);
+  for (let y = 0; y < outputHeight; y++) {
+    const strip = basePattern[y];
+    const same = new Int32Array(outputWidth);
+    for (let x = 0; x < outputWidth; x++) same[x] = x;
+    for (let x = 0; x < outputWidth; x++) {
+      const d = sampleDepth(normalized, dw, dh, x, y, outputWidth, outputHeight);
+      const sep = stripWidth - Math.round(d * maxShift);
+      const left = Math.round(x - sep / 2);
+      const right = left + sep;
+      if (left >= 0 && right < outputWidth) {
+        let l = left, r = right;
+        while (same[l] !== l) l = same[l];
+        while (same[r] !== r) r = same[r];
+        if (l !== r) { if (l < r) same[r] = l; else same[l] = r; }
+      }
+    }
+    for (let x = 0; x < outputWidth; x++) { let root = x; while (same[root] !== root) root = same[root]; same[x] = root; }
+    for (let x = 0; x < outputWidth; x++) {
+      const c = strip[same[x] % stripWidth];
+      const idx = (y * outputWidth + x) * 4;
+      out[idx] = c[0]; out[idx + 1] = c[1]; out[idx + 2] = c[2]; out[idx + 3] = 255;
+    }
+  }
+  return { data: out, width: outputWidth, height: outputHeight, basePattern };
 }
 
 main().catch((err) => {
