@@ -224,8 +224,8 @@ async function main() {
           console.log(`[worker] Reassembling ${formatCount} video(s)`);
           const ffmpegCmd = (inDir, outPath, crf = 23, extraFlags = "") => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf ${crf} ${extraFlags} -shortest -movflags +faststart "${outPath}"`;
           if (doAnaglyph) execSync(ffmpegCmd(outAnaglyph, anaglyphPath, 23), { stdio: "pipe" });
-          // Stereogram patterns are high-entropy noise — needs aggressive compression + scale down to stay under 50MB upload limit
-          if (doStereo) execSync(ffmpegCmd(outStereo, stereoPath, 35, '-vf "scale=min(iw\\,720):-2" -maxrate 2M -bufsize 4M'), { stdio: "pipe" });
+          // Stereogram patterns are high-entropy noise — CRF 31 keeps quality while staying under 50MB Supabase upload limit
+          if (doStereo) execSync(ffmpegCmd(outStereo, stereoPath, 31), { stdio: "pipe" });
           if (doSbs) execSync(ffmpegCmd(outSbs, sbsPath, 23), { stdio: "pipe" });
 
           // Upload selected videos — don't fail the whole job if one upload fails
