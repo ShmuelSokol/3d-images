@@ -1073,6 +1073,12 @@ export default function ImageProcessor() {
                         </button>
                       )}
                       <button
+                        onClick={() => handleReprocess(selected.id, {})}
+                        className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-xs font-medium transition-colors"
+                      >
+                        Rerun
+                      </button>
+                      <button
                         onClick={() => handleDelete(selected.id)}
                         className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"
                       >
