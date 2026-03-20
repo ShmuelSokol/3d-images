@@ -1473,12 +1473,20 @@ export default function ImageProcessor() {
                   {selected.fileName}
                 </h2>
                 <p className="text-gray-400 text-sm mb-3">Cancelled</p>
-                <button
-                  onClick={() => handleDelete(selected.id)}
-                  className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
-                >
-                  Remove
-                </button>
+                <div className="flex justify-center gap-2">
+                  <button
+                    onClick={() => handleReprocess(selected.id, {})}
+                    className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-xs font-medium transition-colors"
+                  >
+                    Reprocess
+                  </button>
+                  <button
+                    onClick={() => handleDelete(selected.id)}
+                    className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs transition-colors"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             )}
 
