@@ -12,14 +12,17 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  password     String
-  imageCredits Int      @default(50)
-  createdAt    DateTime @default(now())
-  images       Image[]
-  couponRedemptions CouponRedemption[]
-  payments     Payment[]
+  id                   String   @id @default(cuid())
+  email                String   @unique
+  password             String
+  imageCredits         Int      @default(50)
+  plan                 String   @default("free")
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  createdAt            DateTime @default(now())
+  images               Image[]
+  couponRedemptions    CouponRedemption[]
+  payments             Payment[]
 
   @@map("td_user")
 }

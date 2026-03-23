@@ -10,14 +10,15 @@ export async function GET(req: NextRequest) {
     const sessionId = getSessionId(req);
 
     if (userId) {
-      // Logged-in user: return credits
+      // Logged-in user: return credits + plan
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { imageCredits: true },
+        select: { imageCredits: true, plan: true },
       });
       return NextResponse.json({
         type: "user",
         credits: user?.imageCredits ?? 0,
+        plan: user?.plan ?? "free",
         limit: null,
       });
     }

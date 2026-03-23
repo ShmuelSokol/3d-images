@@ -25,14 +25,21 @@ export async function POST(req: NextRequest) {
 
     // ── Usage limit check ──
     if (userId) {
-      // Logged-in user: check credits
+      // Logged-in user: check credits + plan
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { imageCredits: true },
+        select: { imageCredits: true, plan: true },
       });
       if (!user || user.imageCredits <= 0) {
         return NextResponse.json(
           { error: "No credits remaining. Purchase more or redeem a coupon.", code: "NO_CREDITS" },
+          { status: 403 }
+        );
+      }
+      // Video requires Pro plan
+      if (isVideo && user.plan !== "pro") {
+        return NextResponse.json(
+          { error: "Video processing requires Pro plan. Upgrade for $9.99/month.", code: "PRO_REQUIRED" },
           { status: 403 }
         );
       }
@@ -42,6 +49,13 @@ export async function POST(req: NextRequest) {
         data: { imageCredits: { decrement: 1 } },
       });
     } else {
+      // Anonymous: no video
+      if (isVideo) {
+        return NextResponse.json(
+          { error: "Video processing requires Pro plan. Sign up and upgrade!", code: "PRO_REQUIRED" },
+          { status: 403 }
+        );
+      }
       // Anonymous user: max 20 images
       const count = await prisma.image.count({
         where: { sessionId, userId: null },

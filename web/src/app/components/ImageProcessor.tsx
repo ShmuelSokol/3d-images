@@ -132,7 +132,8 @@ export default function ImageProcessor() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
-  const [creditInfo, setCreditInfo] = useState<{ type: string; credits: number | null; used?: number; limit?: number | null; remaining?: number } | null>(null);
+  const [creditInfo, setCreditInfo] = useState<{ type: string; credits: number | null; plan?: string; used?: number; limit?: number | null; remaining?: number } | null>(null);
+  const isPro = creditInfo?.plan === "pro";
   const [couponCode, setCouponCode] = useState("");
   const [couponMsg, setCouponMsg] = useState("");
   const [couponError, setCouponError] = useState("");
@@ -245,8 +246,27 @@ export default function ImageProcessor() {
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     const fileArr = Array.from(files);
 
-    // Check if any file is a video — show format picker before uploading
+    // Check if any file is a video — requires Pro plan
     const videoFile = fileArr.find(f => f.type.startsWith("video/"));
+    if (videoFile && !isPro) {
+      alert("Video processing requires Pro plan ($9.99/month). Upgrade to unlock video!");
+      setShowUpgrade(true);
+      // Still upload any image files
+      const imageFiles = fileArr.filter(f => !f.type.startsWith("video/"));
+      if (imageFiles.length > 0) {
+        setUploading(true);
+        try {
+          for (const f of imageFiles) {
+            const ok = await uploadFile(f);
+            if (!ok) break;
+          }
+        } finally {
+          setUploading(false);
+          fetchCredits();
+        }
+      }
+      return;
+    }
     if (videoFile) {
       // Get video duration client-side
       const url = URL.createObjectURL(videoFile);
@@ -293,7 +313,7 @@ export default function ImageProcessor() {
       setUploading(false);
       fetchCredits();
     }
-  }, [uploadFile, fetchCredits]);
+  }, [uploadFile, fetchCredits, isPro]);
 
   // Confirm video upload with selected formats
   const confirmVideoUpload = useCallback(async () => {
@@ -466,6 +486,20 @@ export default function ImageProcessor() {
   async function handleBuyCredits() {
     try {
       const res = await fetch("/api/checkout", { method: "POST" });
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        alert(data.error || "Checkout failed");
+      }
+    } catch {
+      alert("Checkout failed");
+    }
+  }
+
+  async function handleUpgradePro() {
+    try {
+      const res = await fetch("/api/checkout/pro", { method: "POST" });
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
@@ -751,6 +785,14 @@ export default function ImageProcessor() {
             <p className="text-sm text-gray-300 text-center">
               {creditInfo?.credits === 0 ? "You're out of credits!" : `Only ${creditInfo?.credits} credits left!`}
             </p>
+            {!isPro && (
+              <button
+                onClick={handleUpgradePro}
+                className="w-full py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 rounded-lg text-sm font-medium transition-all"
+              >
+                Upgrade to Pro — $9.99/mo
+              </button>
+            )}
             <button
               onClick={handleBuyCredits}
               className="w-full py-2 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 rounded-lg text-sm font-medium transition-all"
