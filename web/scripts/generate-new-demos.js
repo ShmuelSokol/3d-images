@@ -32,7 +32,8 @@ async function main() {
   );
 
   console.log("Loading depth model...");
-  const estimator = await pipeline("depth-estimation", "onnx-community/depth-anything-v2-large", { device: "cpu" });
+  // Previous model (V2): "onnx-community/depth-anything-v2-large"
+  const estimator = await pipeline("depth-estimation", "onnx-community/depth-anything-v3-large", { device: "cpu" });
   console.log("Model ready\n");
 
   for (const demo of DEMOS) {

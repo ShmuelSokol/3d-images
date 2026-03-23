@@ -36,9 +36,10 @@ async function main() {
         process.env.SUPABASE_SERVICE_ROLE_KEY
       );
 
+      // Previous models (V2): small="onnx-community/depth-anything-v2-small", large="onnx-community/depth-anything-v2-large"
       const MODELS = {
         fast: "onnx-community/depth-anything-v2-small",
-        hd: "onnx-community/depth-anything-v2-large",
+        hd: "onnx-community/depth-anything-v3-large",
       };
       const model = MODELS.hd;
 
