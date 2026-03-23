@@ -31,8 +31,22 @@ async function main() {
     process.env.SUPABASE_SERVICE_ROLE_KEY
   );
 
+  // V3 ONNX repo missing preprocessor_config.json — supply it locally
+  const V3_HF_BASE = "https://huggingface.co/onnx-community/depth-anything-v3-large/resolve/main";
+  const localDir = path.join(env.cacheDir, "depth-anything-v3-large-local");
+  const onnxDir = path.join(localDir, "onnx");
+  const modelFile = path.join(onnxDir, "model.onnx");
+  const dataFile = path.join(onnxDir, "model.onnx_data");
+  if (!fs.existsSync(modelFile) || !fs.existsSync(path.join(localDir, "preprocessor_config.json"))) {
+    fs.mkdirSync(onnxDir, { recursive: true });
+    fs.writeFileSync(path.join(localDir, "config.json"), JSON.stringify({ model_type: "depth_anything", "transformers.js_config": { dtype: "fp32", use_external_data_format: true } }));
+    fs.writeFileSync(path.join(localDir, "preprocessor_config.json"), JSON.stringify({ do_normalize: true, do_pad: false, do_rescale: true, do_resize: true, ensure_multiple_of: 14, image_mean: [0.485, 0.456, 0.406], image_processor_type: "DPTImageProcessor", image_std: [0.229, 0.224, 0.225], keep_aspect_ratio: true, resample: 3, rescale_factor: 0.00392156862745098, size: { height: 504, width: 504 }, size_divisor: null }));
+    if (!fs.existsSync(modelFile)) { console.log("Downloading V3 model.onnx..."); execSync(`curl -L --progress-bar -o "${modelFile}" "${V3_HF_BASE}/onnx/model.onnx"`, { stdio: "inherit" }); }
+    if (!fs.existsSync(dataFile)) { console.log("Downloading V3 model.onnx_data (1.38 GB)..."); execSync(`curl -L --progress-bar -o "${dataFile}" "${V3_HF_BASE}/onnx/model.onnx_data"`, { stdio: "inherit" }); }
+  }
+
   console.log("Loading depth model...");
-  const estimator = await pipeline("depth-estimation", "onnx-community/depth-anything-v2-large", { device: "cpu" });
+  const estimator = await pipeline("depth-estimation", localDir, { device: "cpu", local_files_only: true });
   console.log("Model ready\n");
 
   for (const demo of DEMOS) {
