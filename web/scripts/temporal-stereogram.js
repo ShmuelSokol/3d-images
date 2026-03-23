@@ -64,8 +64,7 @@ async function main() {
   console.log("[3/4] Loading depth estimation model...");
   const { pipeline, RawImage: HfRawImage, env } = require("@huggingface/transformers");
   env.cacheDir = process.env.TRANSFORMERS_CACHE || process.env.HF_HOME || path.join(JOB_DIR, ".cache");
-  // Previous model (V2): "onnx-community/depth-anything-v2-large"
-  const model = "onnx-community/depth-anything-v3-large";
+  const model = "onnx-community/depth-anything-v2-large";
   const estimator = await pipeline("depth-estimation", model, { device: "cpu" });
   console.log("[3/4] Model ready");
 

@@ -46,10 +46,9 @@ async function ensureModel(model: string) {
  * Decodes to raw RGB pixels via sharp, then constructs a RawImage directly
  * to avoid data URL issues in Node.js/Docker environments.
  */
-// Previous model (V2): "onnx-community/depth-anything-v2-large"
 export async function estimateDepth(
   imageBuffer: Buffer,
-  model: string = "onnx-community/depth-anything-v3-large"
+  model: string = "onnx-community/depth-anything-v2-large"
 ): Promise<DepthResult> {
   await ensureModel(model);
 
