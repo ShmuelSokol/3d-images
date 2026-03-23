@@ -9,7 +9,7 @@ Upload photos or videos → server-side AI estimates depth per pixel → generat
 - **Storage**: Supabase Storage (bucket: `3d-images`)
 - **Deployment**: Railway (standalone Docker, node:18-slim)
 - **Depth AI**: `@huggingface/transformers` v3 + `onnxruntime-node` (server-side)
-  - Model: Depth Anything V3 Large (ONNX from `onnx-community/depth-anything-v3-large`, downloaded + local preprocessor_config.json since HF repo is missing it)
+  - Model: `onnx-community/depth-anything-v2-large` (cached in HF_HOME=/app/.cache)
 - **Video**: ffmpeg for frame extraction + reassembly (MP4 output)
 
 ## Architecture
