@@ -66,16 +66,32 @@ async function main() {
   env.cacheDir = process.env.TRANSFORMERS_CACHE || process.env.HF_HOME || path.join(JOB_DIR, ".cache");
   // V3 ONNX repo missing preprocessor_config.json — supply it locally
   const V3_HF_BASE = "https://huggingface.co/onnx-community/depth-anything-v3-large/resolve/main";
+  const https = require("https");
+  function dlFile(url, dest) {
+    return new Promise((resolve, reject) => {
+      const file = fs.createWriteStream(dest);
+      https.get(url, (res) => {
+        if (res.statusCode === 301 || res.statusCode === 302) { file.close(); fs.unlinkSync(dest); return dlFile(res.headers.location, dest).then(resolve, reject); }
+        if (res.statusCode !== 200) { file.close(); fs.unlinkSync(dest); return reject(new Error(`Download failed: ${res.statusCode}`)); }
+        const total = parseInt(res.headers["content-length"] || "0", 10);
+        let dl = 0;
+        res.on("data", (c) => { dl += c.length; if (total) process.stdout.write(`\r  Downloading... ${((dl/total)*100).toFixed(1)}%`); });
+        res.pipe(file);
+        file.on("finish", () => { file.close(); console.log(""); resolve(); });
+        file.on("error", (e) => { fs.unlinkSync(dest); reject(e); });
+      }).on("error", (e) => { fs.unlinkSync(dest); reject(e); });
+    });
+  }
   const localDir = path.join(env.cacheDir, "depth-anything-v3-large-local");
   const onnxDir = path.join(localDir, "onnx");
   const modelFile = path.join(onnxDir, "model.onnx");
   const dataFile = path.join(onnxDir, "model.onnx_data");
-  if (!fs.existsSync(modelFile) || !fs.existsSync(path.join(localDir, "preprocessor_config.json"))) {
+  if (!fs.existsSync(modelFile) || !fs.existsSync(dataFile) || !fs.existsSync(path.join(localDir, "preprocessor_config.json"))) {
     fs.mkdirSync(onnxDir, { recursive: true });
     fs.writeFileSync(path.join(localDir, "config.json"), JSON.stringify({ model_type: "depth_anything", "transformers.js_config": { dtype: "fp32", use_external_data_format: true } }));
     fs.writeFileSync(path.join(localDir, "preprocessor_config.json"), JSON.stringify({ do_normalize: true, do_pad: false, do_rescale: true, do_resize: true, ensure_multiple_of: 14, image_mean: [0.485, 0.456, 0.406], image_processor_type: "DPTImageProcessor", image_std: [0.229, 0.224, 0.225], keep_aspect_ratio: true, resample: 3, rescale_factor: 0.00392156862745098, size: { height: 504, width: 504 }, size_divisor: null }));
-    if (!fs.existsSync(modelFile)) { console.log("Downloading V3 model.onnx..."); execSync(`curl -L --progress-bar -o "${modelFile}" "${V3_HF_BASE}/onnx/model.onnx"`, { stdio: "inherit" }); }
-    if (!fs.existsSync(dataFile)) { console.log("Downloading V3 model.onnx_data (1.38 GB)..."); execSync(`curl -L --progress-bar -o "${dataFile}" "${V3_HF_BASE}/onnx/model.onnx_data"`, { stdio: "inherit" }); }
+    if (!fs.existsSync(modelFile)) { console.log("Downloading V3 model.onnx..."); await dlFile(`${V3_HF_BASE}/onnx/model.onnx`, modelFile); }
+    if (!fs.existsSync(dataFile)) { console.log("Downloading V3 model.onnx_data (1.38 GB)..."); await dlFile(`${V3_HF_BASE}/onnx/model.onnx_data`, dataFile); }
   }
   const estimator = await pipeline("depth-estimation", localDir, { device: "cpu", local_files_only: true });
   console.log("[3/4] Model ready");
