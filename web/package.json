@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:push:prod": "node scripts/db-push-guarded.js",
+    "db:backup": "node scripts/db-backup.js",
+    "db:migrate": "node scripts/migrate.js"
   },
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

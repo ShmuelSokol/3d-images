@@ -53,11 +53,22 @@ railway up web --path-as-root --detach
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5
-- **DO NOT run `prisma db push`** — shared DB with ocr-hebrew & 3rdBHMK, use raw SQL
 - NEXT_PUBLIC_ vars must be available at build time
-- Health check at `/api/health`
+- Health check at `/api/health` — returns 503 `schema-missing` if any critical table is gone
 - DB table prefix: `td_` (3d = td)
 - Dockerfile uses node:18-slim (Debian), NOT Alpine — onnxruntime-node needs glibc
+
+## DANGER — DB safety (post-2026-04-19 migration)
+- 3D Images now has its own dedicated Supabase project: `fslwkomtwcxsnprhknyw` (us-east-1). Migrated off shared `ushngszdltlctmqlwgot` after OCR Hebrew's schema was wiped by a stray `db push` from a sibling project.
+- **NEVER run `prisma db push` with prod `DATABASE_URL`** unless via `npm run db:push:prod` (guarded — refuses if DB has rows unless `CONFIRM_SCHEMA_CHANGE=yes`).
+- Schema changes go through `scripts/migrate.js` (raw SQL with `IF NOT EXISTS`).
+- `npm run db:backup` → nightly JSON dump with 30-day rotation.
+- Dockerfile does NOT auto-run db push on boot.
+
+## Infrastructure IDs
+- Supabase project: `fslwkomtwcxsnprhknyw` (dedicated, us-east-1)
+- Supabase pooler: `aws-1-us-east-1.pooler.supabase.com`
+- Storage bucket: `3d-images` (public)
 - `@huggingface/transformers` v3 is the depth AI dependency (server-side, NOT CDN-loaded)
 - Must be in `experimental.serverComponentsExternalPackages` in next.config.mjs
 - Video: max 60s, 15fps, 720p, output is MP4 (H.264)
