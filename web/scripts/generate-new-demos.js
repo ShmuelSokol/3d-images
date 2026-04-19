@@ -15,7 +15,7 @@ const DEMOS = [
   { id: "cmmuga4w7000thw68kq8rvuy3", orig: "1773742152987-ok99or8nboi.jpeg" },
 ];
 
-const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
+const BASE = "https://fslwkomtwcxsnprhknyw.supabase.co/storage/v1/object/public/3d-images";
 const TMP = "/tmp/new-demos";
 
 async function main() {

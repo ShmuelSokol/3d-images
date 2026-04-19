@@ -22,7 +22,7 @@ const fs = require("fs");
 const path = require("path");
 
 // Config
-const VIDEO_URL = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images/originals/1773859284614-demo-video.mp4";
+const VIDEO_URL = "https://fslwkomtwcxsnprhknyw.supabase.co/storage/v1/object/public/3d-images/originals/1773859284614-demo-video.mp4";
 const JOB_DIR = "/tmp/temporal-stereogram";
 const FRAMES_DIR = path.join(JOB_DIR, "input-frames");
 const DEPTH_DIR = path.join(JOB_DIR, "depth");

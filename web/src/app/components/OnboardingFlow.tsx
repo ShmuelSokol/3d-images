@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 
-const BASE = "https://ushngszdltlctmqlwgot.supabase.co/storage/v1/object/public/3d-images";
+const BASE = "https://fslwkomtwcxsnprhknyw.supabase.co/storage/v1/object/public/3d-images";
 const MAIN_ID = "cmmukn84k0001100wlhq1jqy7";
 const VIDEO_ID = "cmmwe0ous0000qazwsthfi6mt";
 
