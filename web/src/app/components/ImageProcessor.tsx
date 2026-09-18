@@ -825,12 +825,6 @@ export default function ImageProcessor() {
       <header className="mb-8 sm:mb-10">
         <div className="flex items-center justify-between mb-3">
           <div className="w-24 flex flex-col items-start gap-1">
-            <a
-              href="/library"
-              className="text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors whitespace-nowrap font-medium"
-            >
-              Library &rarr;
-            </a>
             {!introVisible && (
               <button
                 onClick={() => setShowOnboarding(true)}

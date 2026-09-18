@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import SiteNav from "./components/SiteNav";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://3d.kbrlive.com"),
@@ -91,6 +92,7 @@ export default function RootLayout({
             }),
           }}
         />
+        <SiteNav />
         {children}
         <footer className="border-t border-gray-800 bg-black text-gray-500 text-xs py-6 px-4">
           <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
