@@ -73,4 +73,25 @@ export function createAdminToken(): string {
   return jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "7d" });
 }
 
+/**
+ * A job belongs to the caller if they own it while logged in, or — for
+ * anonymous jobs — if it was created in this browser session. Admins pass.
+ *
+ * Read the session cookie directly: getSessionId() mints a fresh id when none
+ * exists, which would never match a stored one.
+ *
+ * Lives here rather than in a route so every caller shares one definition —
+ * a second copy drifts the moment either is edited.
+ */
+export function ownsJob(
+  job: { userId: string | null; sessionId: string | null },
+  req: NextRequest
+): boolean {
+  if (isAdmin(req)) return true;
+  const userId = getUserId(req);
+  if (job.userId) return userId !== null && job.userId === userId;
+  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
+  return !!job.sessionId && !!cookie && job.sessionId === cookie;
+}
+
 export { SESSION_COOKIE, AUTH_COOKIE, ADMIN_COOKIE };

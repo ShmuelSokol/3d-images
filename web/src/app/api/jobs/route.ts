@@ -289,6 +289,7 @@ export async function GET(req: NextRequest) {
         frameCount: true,
         framesDone: true,
         isPublic: true,
+        hiRes: true,
         moderationStatus: true,
         appealText: true,
         createdAt: true,

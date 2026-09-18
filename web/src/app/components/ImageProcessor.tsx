@@ -30,6 +30,7 @@ interface Job {
   frameCount: number | null;
   framesDone: number;
   isPublic?: boolean;
+  hiRes?: boolean;
   moderationStatus?: string;
   appealText?: string | null;
   createdAt: string;
@@ -119,6 +120,10 @@ export default function ImageProcessor() {
   const [colorMode, setColorMode] = useState("dubois");
   const [fillOcclusion, setFillOcclusion] = useState(true);
   const [hiRes, setHiRes] = useState(false);
+  const [showPrint, setShowPrint] = useState(false);
+  const [printSize, setPrintSize] = useState("18x24");
+  const [printFit, setPrintFit] = useState<"cover" | "contain">("cover");
+  const [printFormat, setPrintFormat] = useState("anaglyph");
   const [user, setUser] = useState<{ id: string; email: string } | null>(null);
   const [showAuth, setShowAuth] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
@@ -1242,6 +1247,15 @@ export default function ImageProcessor() {
                       >
                         Rerun
                       </button>
+                      <button
+                        onClick={() => setShowPrint((v) => !v)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          showPrint ? "bg-amber-600 hover:bg-amber-500" : "bg-gray-700 hover:bg-gray-600"
+                        }`}
+                        title="Export a print-ready file at a poster size"
+                      >
+                        Print
+                      </button>
                       {selected.moderationStatus === "removed" ? (
                         <span
                           className="px-3 py-1.5 bg-red-900/40 text-red-300 rounded-lg text-xs font-medium"
@@ -1289,6 +1303,74 @@ export default function ImageProcessor() {
                       </button>
                     </div>
                     </div>
+
+                    {showPrint && (
+                      <div className="bg-gray-950/70 border border-amber-900/40 rounded-lg p-3 space-y-3">
+                        <div className="flex flex-wrap items-end gap-3 text-xs">
+                          <div className="flex flex-col gap-1">
+                            <span className="text-gray-500">Print size</span>
+                            <select
+                              value={printSize}
+                              onChange={(e) => setPrintSize(e.target.value)}
+                              className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                            >
+                              <option value="12x18">12&quot; x 18&quot;</option>
+                              <option value="16x20">16&quot; x 20&quot;</option>
+                              <option value="18x24">18&quot; x 24&quot;</option>
+                              <option value="24x36">24&quot; x 36&quot;</option>
+                              <option value="a2">A2 (42 x 59.4cm)</option>
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-gray-500">If it doesn&apos;t fit</span>
+                            <select
+                              value={printFit}
+                              onChange={(e) => setPrintFit(e.target.value as "cover" | "contain")}
+                              className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                            >
+                              <option value="cover">Crop to fill</option>
+                              <option value="contain">Fit with white border</option>
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <span className="text-gray-500">Format</span>
+                            <select
+                              value={printFormat}
+                              onChange={(e) => setPrintFormat(e.target.value)}
+                              className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200"
+                            >
+                              <option value="anaglyph">Anaglyph (red/cyan)</option>
+                              <option value="sbs">Side-by-side</option>
+                              <option value="stereogram">Magic Eye</option>
+                            </select>
+                          </div>
+                          <a
+                            href={`/api/jobs/${selected.id}/print?size=${printSize}&fit=${printFit}&format=${printFormat}`}
+                            className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded-lg text-xs font-medium transition-colors"
+                          >
+                            Download print file
+                          </a>
+                        </div>
+                        <p className="text-[11px] text-gray-500 leading-relaxed">
+                          150 dpi, sized for the paper — the standard for posters, which are
+                          viewed from arm&apos;s length or further.
+                          {!selected.hiRes && (
+                            <span className="text-amber-500">
+                              {" "}This was rendered at standard resolution, so a large print will
+                              look soft. Re-run it with HD output on for a sharp poster.
+                            </span>
+                          )}
+                          {selected.colorMode === "dubois" && printFormat === "anaglyph" && (
+                            <span className="text-gray-400">
+                              {" "}Printing tip: Dubois is tuned for screens and can print muddy —
+                              Classic red/cyan usually survives CMYK better. Use matte paper;
+                              gloss reflections break the 3D effect.
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    )}
+
                     {/* Settings row */}
                     <div className="flex flex-wrap items-center gap-3 text-xs">
                       <div className="flex items-center gap-1.5 text-gray-400">

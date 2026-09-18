@@ -1,26 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSupabase } from "@/lib/supabase";
-import { getSessionId, getUserId, isAdmin, SESSION_COOKIE } from "@/lib/session";
+import { getSessionId, getUserId, ownsJob } from "@/lib/session";
 import sharp from "sharp";
 import { jobQueue } from "@/lib/job-queue";
-
-/**
- * A job belongs to the caller if they own it while logged in, or — for
- * anonymous jobs — if it was created in this browser session. Admins pass.
- * Note we read the session cookie directly rather than via getSessionId(),
- * which mints a fresh id when none exists and would never match.
- */
-function ownsJob(
-  job: { userId: string | null; sessionId: string | null },
-  req: NextRequest
-): boolean {
-  if (isAdmin(req)) return true;
-  const userId = getUserId(req);
-  if (job.userId) return userId !== null && job.userId === userId;
-  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
-  return !!job.sessionId && !!cookie && job.sessionId === cookie;
-}
 
 export async function GET(
   req: NextRequest,
