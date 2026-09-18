@@ -9,7 +9,7 @@ export interface RawImage {
 /**
  * Gaussian blur a depth map in-place for smoother 3D transitions.
  */
-function blurDepth(
+export function blurDepth(
   depth: Float32Array,
   w: number,
   h: number,
@@ -83,7 +83,7 @@ function sampleBilinear(
 /**
  * Sample a smoothed depth value at image coordinates.
  */
-function sampleDepth(
+export function sampleDepth(
   smoothed: Float32Array,
   depthWidth: number,
   depthHeight: number,
@@ -336,7 +336,11 @@ export async function rawToJpeg(image: RawImage, quality = 92): Promise<Buffer> 
   return sharp(image.data, {
     raw: { width: image.width, height: image.height, channels: 4 },
   })
-    .jpeg({ quality, mozjpeg: true })
+    // Deliberately NOT mozjpeg. Its trellis quantisation measured 23x slower
+    // here (1837ms vs 81ms on a 3072x2304 frame) to save roughly 5% of file
+    // size — and this runs inside the job queue, which processes one job at a
+    // time, so every second is a second every other queued job waits.
+    .jpeg({ quality })
     .toBuffer();
 }
 

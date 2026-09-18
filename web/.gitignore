@@ -34,3 +34,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Generated at build time from src/lib/server-anaglyph.ts (see build:render-lib)
+scripts/lib/

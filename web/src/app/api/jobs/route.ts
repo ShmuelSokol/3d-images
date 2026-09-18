@@ -288,6 +288,8 @@ export async function GET(req: NextRequest) {
         duration: true,
         frameCount: true,
         framesDone: true,
+        startedAt: true,
+        processingMs: true,
         isPublic: true,
         hiRes: true,
         moderationStatus: true,

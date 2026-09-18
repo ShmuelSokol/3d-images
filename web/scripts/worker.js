@@ -15,17 +15,12 @@ async function main() {
   const { PrismaClient } = require("@prisma/client");
   const prisma = new PrismaClient();
 
-  process.on("message", async (msg) => {
-    const jobId = msg.jobId;
-    try {
-      const job = await prisma.image.findUnique({ where: { id: jobId } });
-      if (!job || job.status !== "processing") {
-        process.exit(0);
-        return;
-      }
-
-      // Dynamically import heavy modules
-      const sharp = require("sharp");
+  // ---- One-time setup ----
+  // This all used to live inside the per-message handler, and the process
+  // exited after a single job — so every job paid the full model load (and,
+  // with no persistent cache volume, sometimes a full re-download). The worker
+  // now stays alive and reuses the loaded model across jobs.
+  const sharp = require("sharp");
       const { pipeline, RawImage, env } = require("@huggingface/transformers");
 
       env.cacheDir = process.env.TRANSFORMERS_CACHE || process.env.HF_HOME || "/tmp/.cache";
@@ -41,13 +36,16 @@ async function main() {
         hd: "onnx-community/depth-anything-v2-large",
       };
       const model = MODELS.hd;
+      // fp16 rather than the default fp32: roughly half the download and half
+      // the load time, for a depth map that is smoothed and normalised anyway.
+      const MODEL_DTYPE = "fp16";
 
       // --- Depth estimator ---
       let estimator = null;
       async function estimateDepth(imageBuffer) {
         if (!estimator) {
           console.log(`[worker] Loading model: ${model}`);
-          estimator = await pipeline("depth-estimation", model, { device: "cpu" });
+          estimator = await pipeline("depth-estimation", model, { device: "cpu", dtype: MODEL_DTYPE });
           console.log(`[worker] Model ready: ${model}`);
         }
         const { data: pixels, info } = await sharp(imageBuffer)
@@ -63,12 +61,34 @@ async function main() {
         return { data: out, width: r.predicted_depth.dims[1], height: r.predicted_depth.dims[0] };
       }
 
-      // Handle SIGTERM — finish current frame, save progress, exit
-      let shutdownRequested = false;
-      process.on("SIGTERM", () => {
-        console.log("[worker] SIGTERM received, will exit after current frame");
-        shutdownRequested = true;
-      });
+
+  // Handle SIGTERM — finish the current frame, save progress, then exit.
+  // `busy` matters now that the worker is long-lived: it used to exit after
+  // every job, so it was never sitting idle when a shutdown arrived. An idle
+  // worker must exit immediately, or it outlives the parent as an orphan still
+  // holding the depth model in memory.
+  let shutdownRequested = false;
+  let busy = false;
+  process.on("SIGTERM", async () => {
+    shutdownRequested = true;
+    if (!busy) {
+      console.log("[worker] SIGTERM received while idle, exiting");
+      await prisma.$disconnect().catch(() => {});
+      process.exit(0);
+    }
+    console.log("[worker] SIGTERM received, will exit after current job");
+  });
+
+  process.on("message", async (msg) => {
+    const jobId = msg.jobId;
+    busy = true;
+    try {
+      const job = await prisma.image.findUnique({ where: { id: jobId } });
+      if (!job || job.status !== "processing") {
+        // The finally block reports completion — sending here too would emit a
+        // duplicate "done" for the same job.
+        return;
+      }
 
       if (job.mediaType === "video") {
         // Video processing — import server-video logic inline
@@ -300,28 +320,61 @@ async function main() {
         }
         const jpegBuf = Buffer.from(await sharp(resized).jpeg({ quality: 85 }).toBuffer());
 
+        // Depth always runs on the <=1024px copy — that's the model's working
+        // resolution, more pixels wouldn't improve it.
         const depth = await estimateDepth(jpegBuf);
-        const { data: rawData, info: rawInfo } = await sharp(resized).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+
+        // HD renders the 3D effect at the image's own resolution instead of the
+        // 1024px working copy. The renderers sample depth by relative position,
+        // so a small depth map drives a large image correctly.
+        const HD_MAX_DIM = 3072;
+        let renderSource = resized;
+        if (job.hiRes) {
+          const ow = meta.width || 0;
+          const oh = meta.height || 0;
+          const longest = Math.max(ow, oh);
+          if (longest > HD_MAX_DIM) {
+            const sc = HD_MAX_DIM / longest;
+            renderSource = Buffer.from(
+              await sharp(rotated).resize(Math.round(ow * sc), Math.round(oh * sc)).toBuffer()
+            );
+          } else {
+            renderSource = rotated;
+          }
+          console.log(`[worker] HD render for ${jobId}`);
+        }
+
+        const { data: rawData, info: rawInfo } = await sharp(renderSource).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
         const rawImg = { data: rawData, width: rawInfo.width, height: rawInfo.height };
+        const outW = rawInfo.width;
+        const outH = rawInfo.height;
 
         const anaglyph = generateAnaglyphServer(rawImg, depth.data, depth.width, depth.height, job.intensity, job.colorMode === "classic" ? "classic" : "dubois", job.fillOcclusion);
+        // Stereograms stay at the 1024px working size at any setting: their dot
+        // separation is an absolute pixel distance, so a bigger canvas only
+        // pushes it below what a viewer can fuse once the image is fitted to
+        // their screen. Random dots have no detail to preserve either.
         const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, w, h);
         const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
 
+        const ext = job.hiRes ? "jpg" : "png";
+        const imgType = job.hiRes ? "image/jpeg" : "image/png";
+        const encodeMain = (img) => (job.hiRes ? rawToJpeg(img) : rawToPng(img));
+
         const [anaglyphPng, depthPng, colorMapPng, stereogramPng, sbsPng] = await Promise.all([
-          sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer(),
+          encodeMain(anaglyph),
           depthToPng(depth.data, depth.width, depth.height),
           generateColorMap(depth.data, depth.width, depth.height),
-          sharp(stereogram.data, { raw: { width: stereogram.width, height: stereogram.height, channels: 4 } }).png().toBuffer(),
-          sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).png().toBuffer(),
+          rawToPng(stereogram),
+          encodeMain(sbs),
         ]);
 
         const [anaUpload, depthUpload, distUpload, stereoUpload, sbsUpload] = await Promise.all([
-          supabase.storage.from("3d-images").upload(`anaglyph/${jobId}-anaglyph.png`, anaglyphPng, { contentType: "image/png", upsert: true }),
+          supabase.storage.from("3d-images").upload(`anaglyph/${jobId}-anaglyph.${ext}`, anaglyphPng, { contentType: imgType, upsert: true }),
           supabase.storage.from("3d-images").upload(`depth/${jobId}-depth.png`, depthPng, { contentType: "image/png", upsert: true }),
           supabase.storage.from("3d-images").upload(`distance/${jobId}-distance.png`, colorMapPng, { contentType: "image/png", upsert: true }),
           supabase.storage.from("3d-images").upload(`stereogram/${jobId}-stereogram.png`, stereogramPng, { contentType: "image/png", upsert: true }),
-          supabase.storage.from("3d-images").upload(`sbs/${jobId}-sbs.png`, sbsPng, { contentType: "image/png", upsert: true }),
+          supabase.storage.from("3d-images").upload(`sbs/${jobId}-sbs.${ext}`, sbsPng, { contentType: imgType, upsert: true }),
         ]);
 
         if (anaUpload.error) throw new Error(`Anaglyph upload: ${anaUpload.error.message}`);
@@ -330,17 +383,28 @@ async function main() {
         if (stereoUpload.error) throw new Error(`Stereogram upload: ${stereoUpload.error.message}`);
         if (sbsUpload.error) throw new Error(`SBS upload: ${sbsUpload.error.message}`);
 
-        const anaglyphUrl = supabase.storage.from("3d-images").getPublicUrl(`anaglyph/${jobId}-anaglyph.png`).data.publicUrl;
+        const anaglyphUrl = supabase.storage.from("3d-images").getPublicUrl(`anaglyph/${jobId}-anaglyph.${ext}`).data.publicUrl;
         const depthMapUrl = supabase.storage.from("3d-images").getPublicUrl(`depth/${jobId}-depth.png`).data.publicUrl;
         const distanceMapUrl = supabase.storage.from("3d-images").getPublicUrl(`distance/${jobId}-distance.png`).data.publicUrl;
         const stereogramUrl = supabase.storage.from("3d-images").getPublicUrl(`stereogram/${jobId}-stereogram.png`).data.publicUrl;
-        const sbsUrl = supabase.storage.from("3d-images").getPublicUrl(`sbs/${jobId}-sbs.png`).data.publicUrl;
+        const sbsUrl = supabase.storage.from("3d-images").getPublicUrl(`sbs/${jobId}-sbs.${ext}`).data.publicUrl;
 
         await prisma.image.update({
           where: { id: jobId },
-          data: { anaglyphUrl, depthMapUrl, distanceMapUrl, stereogramUrl, sbsUrl, width: w, height: h, status: "done" },
+          data: { anaglyphUrl, depthMapUrl, distanceMapUrl, stereogramUrl, sbsUrl, width: outW, height: outH, status: "done" },
         });
         console.log(`[worker] Image done: ${jobId}`);
+
+        // Record how long it took, so the UI shows a real duration rather than
+        // an open-ended spinner.
+        if (job.startedAt) {
+          await prisma.image
+            .update({
+              where: { id: jobId },
+              data: { processingMs: Date.now() - new Date(job.startedAt).getTime() },
+            })
+            .catch(() => {});
+        }
       }
     } catch (err) {
       const msg = err.message || "Processing failed";
@@ -349,269 +413,66 @@ async function main() {
       } else {
         console.error(`[worker] Failed: ${jobId}`, err);
         await prisma.image.update({ where: { id: jobId }, data: { status: "error", error: msg } }).catch(() => {});
+
+        // Refund the credit — a failed job must never cost the user anything.
+        // Guarded by `refunded` so retry/reprocess can't mint credits: the job
+        // was charged once at upload, so it can be refunded at most once.
+        try {
+          const failed = await prisma.image.findUnique({
+            where: { id: jobId },
+            select: { userId: true, refunded: true, hdCreditUsed: true },
+          });
+          if (failed && failed.userId && !failed.refunded) {
+            const claimed = await prisma.image.updateMany({
+              where: { id: jobId, refunded: false },
+              data: { refunded: true },
+            });
+            if (claimed.count === 1) {
+              await prisma.user.update({
+                where: { id: failed.userId },
+                data: {
+                  imageCredits: { increment: 1 },
+                  ...(failed.hdCreditUsed ? { hdCredits: { increment: 1 } } : {}),
+                },
+              });
+              console.log(`[worker] Refunded 1 credit${failed.hdCreditUsed ? " + 1 HD export" : ""} to ${failed.userId}`);
+            }
+          }
+        } catch (refundErr) {
+          console.error(`[worker] Refund failed for ${jobId}:`, refundErr.message);
+        }
       }
     } finally {
-      await prisma.$disconnect();
-      process.exit(0);
+      busy = false;
+      // Stay alive: the loaded model is the expensive part, and the queue sends
+      // the next job to this same process. The parent kills us on shutdown.
+      if (process.send) process.send({ done: true, jobId });
+      if (shutdownRequested) {
+        await prisma.$disconnect().catch(() => {});
+        process.exit(0);
+      }
     }
   });
 
   if (process.send) process.send({ ready: true });
 }
 
-// --- Inline anaglyph functions (to avoid import issues in standalone) ---
+// --- Render maths ---
+// Compiled from src/lib/server-anaglyph.ts at build time (npm run build:render-lib).
+// These used to be hand-copied into this file, which is how a fixed Magic Eye
+// algorithm, and an HD render path, could sit in the TypeScript source while
+// production quietly kept running the old duplicate. One source of truth now.
+const {
+  sampleDepth,
+  generateAnaglyphServer,
+  generateColorMap,
+  depthToPng,
+  rawToPng,
+  rawToJpeg,
+  generateAutostereogram,
+  generateSideBySide,
+} = require(path.join(__dirname, "lib", "server-anaglyph.js"));
 
-function blurDepth(depth, w, h, radius) {
-  const out = new Float32Array(depth.length);
-  const tmp = new Float32Array(depth.length);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let sum = 0, weight = 0;
-      for (let dx = -radius; dx <= radius; dx++) {
-        const sx = Math.min(Math.max(x + dx, 0), w - 1);
-        const g = Math.exp(-(dx * dx) / (2 * (radius * 0.5) * (radius * 0.5)));
-        sum += depth[y * w + sx] * g;
-        weight += g;
-      }
-      tmp[y * w + x] = sum / weight;
-    }
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      let sum = 0, weight = 0;
-      for (let dy = -radius; dy <= radius; dy++) {
-        const sy = Math.min(Math.max(y + dy, 0), h - 1);
-        const g = Math.exp(-(dy * dy) / (2 * (radius * 0.5) * (radius * 0.5)));
-        sum += tmp[sy * w + x] * g;
-        weight += g;
-      }
-      out[y * w + x] = sum / weight;
-    }
-  }
-  return out;
-}
-
-function sampleBilinear(pixels, width, height, x, y, channel) {
-  const x0 = Math.floor(x), x1 = Math.min(x0 + 1, width - 1);
-  const y0 = Math.floor(y), y1 = Math.min(y0 + 1, height - 1);
-  const fx = x - x0, fy = y - y0;
-  return pixels[(y0 * width + x0) * 4 + channel] * (1 - fx) * (1 - fy) +
-         pixels[(y0 * width + x1) * 4 + channel] * fx * (1 - fy) +
-         pixels[(y1 * width + x0) * 4 + channel] * (1 - fx) * fy +
-         pixels[(y1 * width + x1) * 4 + channel] * fx * fy;
-}
-
-function sampleDepth(smoothed, dw, dh, ix, iy, iw, ih) {
-  const dxf = (ix / iw) * (dw - 1), dyf = (iy / ih) * (dh - 1);
-  const dx0 = Math.floor(dxf), dx1 = Math.min(dx0 + 1, dw - 1);
-  const dy0 = Math.floor(dyf), dy1 = Math.min(dy0 + 1, dh - 1);
-  const fx = dxf - dx0, fy = dyf - dy0;
-  return smoothed[dy0 * dw + dx0] * (1 - fx) * (1 - fy) +
-         smoothed[dy0 * dw + dx1] * fx * (1 - fy) +
-         smoothed[dy1 * dw + dx0] * (1 - fx) * fy +
-         smoothed[dy1 * dw + dx1] * fx * fy;
-}
-
-function fillOcclusions(out, width, height, shiftMap) {
-  for (let y = 0; y < height; y++) {
-    let lastValidR = 0, lastValidG = 0, lastValidB = 0;
-    for (let x = 0; x < width; x++) {
-      const idx = (y * width + x) * 4;
-      const shift = shiftMap[y * width + x];
-      if (x + shift <= 0.5) { out[idx] = lastValidR; } else { lastValidR = out[idx]; }
-      if (x - shift <= 0.5) { out[idx + 1] = lastValidG; out[idx + 2] = lastValidB; } else { lastValidG = out[idx + 1]; lastValidB = out[idx + 2]; }
-    }
-    lastValidR = 0; lastValidG = 0; lastValidB = 0;
-    for (let x = width - 1; x >= 0; x--) {
-      const idx = (y * width + x) * 4;
-      const shift = shiftMap[y * width + x];
-      if (x + shift >= width - 1.5) { out[idx] = lastValidR; } else { lastValidR = out[idx]; }
-      if (x - shift >= width - 1.5) { out[idx + 1] = lastValidG; out[idx + 2] = lastValidB; } else { lastValidG = out[idx + 1]; lastValidB = out[idx + 2]; }
-    }
-  }
-}
-
-function generateAnaglyphServer(image, depthData, depthWidth, depthHeight, intensity, colorMode, doFillOcclusion) {
-  const { data: pixels, width, height } = image;
-  const out = Buffer.alloc(width * height * 4);
-  const shiftMap = new Float32Array(width * height);
-
-  let minD = Infinity, maxD = -Infinity;
-  for (let i = 0; i < depthData.length; i++) {
-    if (depthData[i] < minD) minD = depthData[i];
-    if (depthData[i] > maxD) maxD = depthData[i];
-  }
-  const rangeD = maxD - minD || 1;
-  const normalized = new Float32Array(depthData.length);
-  for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
-
-  const blurRadius = Math.max(2, Math.round(Math.min(depthWidth, depthHeight) / 150));
-  const smoothed = blurDepth(normalized, depthWidth, depthHeight, blurRadius);
-
-  const duboisL = [0.4561, 0.500484, 0.176381, -0.0434706, -0.0879388, -0.00155529, -0.0152159, -0.0205971, -0.00546856];
-  const duboisR = [-0.0434706, -0.0879388, -0.00155529, 0.378476, 0.73364, -0.0184503, -0.0721527, -0.112961, 1.2264];
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const d = sampleDepth(smoothed, depthWidth, depthHeight, x, y, width, height);
-      const shift = d * intensity;
-      shiftMap[y * width + x] = shift;
-      const leftX = Math.min(Math.max(x - shift, 0), width - 1);
-      const rightX = Math.min(Math.max(x + shift, 0), width - 1);
-      const outIdx = (y * width + x) * 4;
-      const lR = sampleBilinear(pixels, width, height, leftX, y, 0) / 255;
-      const lG = sampleBilinear(pixels, width, height, leftX, y, 1) / 255;
-      const lB = sampleBilinear(pixels, width, height, leftX, y, 2) / 255;
-      const rR = sampleBilinear(pixels, width, height, rightX, y, 0) / 255;
-      const rG = sampleBilinear(pixels, width, height, rightX, y, 1) / 255;
-      const rB = sampleBilinear(pixels, width, height, rightX, y, 2) / 255;
-      if (colorMode === "dubois") {
-        const oR = duboisL[0]*lR + duboisL[1]*lG + duboisL[2]*lB + duboisR[0]*rR + duboisR[1]*rG + duboisR[2]*rB;
-        const oG = duboisL[3]*lR + duboisL[4]*lG + duboisL[5]*lB + duboisR[3]*rR + duboisR[4]*rG + duboisR[5]*rB;
-        const oB = duboisL[6]*lR + duboisL[7]*lG + duboisL[8]*lB + duboisR[6]*rR + duboisR[7]*rG + duboisR[8]*rB;
-        out[outIdx] = Math.round(Math.min(Math.max(oR, 0), 1) * 255);
-        out[outIdx + 1] = Math.round(Math.min(Math.max(oG, 0), 1) * 255);
-        out[outIdx + 2] = Math.round(Math.min(Math.max(oB, 0), 1) * 255);
-      } else {
-        out[outIdx] = Math.round(lR * 255);
-        out[outIdx + 1] = Math.round(rG * 255);
-        out[outIdx + 2] = Math.round(rB * 255);
-      }
-      out[outIdx + 3] = 255;
-    }
-  }
-  if (doFillOcclusion) fillOcclusions(out, width, height, shiftMap);
-  return { data: out, width, height };
-}
-
-async function depthToPng(depthData, width, height) {
-  const sharp = require("sharp");
-  const buf = Buffer.alloc(width * height);
-  let minD = Infinity, maxD = -Infinity;
-  for (let i = 0; i < depthData.length; i++) {
-    if (depthData[i] < minD) minD = depthData[i];
-    if (depthData[i] > maxD) maxD = depthData[i];
-  }
-  const rangeD = maxD - minD || 1;
-  for (let i = 0; i < depthData.length; i++) buf[i] = Math.round(((depthData[i] - minD) / rangeD) * 255);
-  return sharp(buf, { raw: { width, height, channels: 1 } }).png().toBuffer();
-}
-
-async function generateColorMap(depthData, width, height) {
-  const sharp = require("sharp");
-  let minD = Infinity, maxD = -Infinity;
-  for (let i = 0; i < depthData.length; i++) {
-    if (depthData[i] < minD) minD = depthData[i];
-    if (depthData[i] > maxD) maxD = depthData[i];
-  }
-  const rangeD = maxD - minD || 1;
-  const rgba = Buffer.alloc(width * height * 4);
-  for (let i = 0; i < width * height; i++) {
-    const d = (depthData[i] - minD) / rangeD;
-    let r, g, b;
-    if (d < 0.25) { const t = d / 0.25; r = 0; g = Math.round(t * 255); b = 255; }
-    else if (d < 0.5) { const t = (d - 0.25) / 0.25; r = 0; g = 255; b = Math.round((1 - t) * 255); }
-    else if (d < 0.75) { const t = (d - 0.5) / 0.25; r = Math.round(t * 255); g = 255; b = 0; }
-    else { const t = (d - 0.75) / 0.25; r = 255; g = Math.round((1 - t) * 255); b = 0; }
-    rgba[i * 4] = r; rgba[i * 4 + 1] = g; rgba[i * 4 + 2] = b; rgba[i * 4 + 3] = 255;
-  }
-  return sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
-}
-
-function generateAutostereogram(depthData, dw, dh, outputWidth, outputHeight) {
-  let minD = Infinity, maxD = -Infinity;
-  for (let i = 0; i < depthData.length; i++) {
-    if (depthData[i] < minD) minD = depthData[i];
-    if (depthData[i] > maxD) maxD = depthData[i];
-  }
-  const rangeD = maxD - minD || 1;
-  const normalized = new Float32Array(depthData.length);
-  for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
-
-  const stripWidth = Math.round(outputWidth / 7);
-  const maxShift = Math.round(stripWidth * 0.35);
-  const out = Buffer.alloc(outputWidth * outputHeight * 4);
-
-  let seed = 42;
-  function rand() {
-    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
-    return ((seed >>> 0) / 0xffffffff);
-  }
-
-  for (let y = 0; y < outputHeight; y++) {
-    const same = new Int32Array(outputWidth);
-    for (let x = 0; x < outputWidth; x++) same[x] = x;
-    for (let x = 0; x < outputWidth; x++) {
-      const d = sampleDepth(normalized, dw, dh, x, y, outputWidth, outputHeight);
-      const sep = stripWidth - Math.round(d * maxShift);
-      const left = Math.round(x - sep / 2);
-      const right = left + sep;
-      if (left >= 0 && right < outputWidth) {
-        let l = left, r = right;
-        while (same[l] !== l) l = same[l];
-        while (same[r] !== r) r = same[r];
-        if (l !== r) { if (l < r) same[r] = l; else same[l] = r; }
-      }
-    }
-    for (let x = 0; x < outputWidth; x++) {
-      let root = x;
-      while (same[root] !== root) root = same[root];
-      same[x] = root;
-    }
-    const colors = new Array(outputWidth).fill(null);
-    for (let x = 0; x < outputWidth; x++) {
-      const root = same[x];
-      if (!colors[root]) colors[root] = [Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)];
-      const c = colors[root];
-      const idx = (y * outputWidth + x) * 4;
-      out[idx] = c[0]; out[idx + 1] = c[1]; out[idx + 2] = c[2]; out[idx + 3] = 255;
-    }
-  }
-  return { data: out, width: outputWidth, height: outputHeight };
-}
-
-function generateSideBySide(image, depthData, dw, dh, intensity) {
-  const { data: pixels, width, height } = image;
-  let minD = Infinity, maxD = -Infinity;
-  for (let i = 0; i < depthData.length; i++) {
-    if (depthData[i] < minD) minD = depthData[i];
-    if (depthData[i] > maxD) maxD = depthData[i];
-  }
-  const rangeD = maxD - minD || 1;
-  const normalized = new Float32Array(depthData.length);
-  for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
-  const br = Math.max(2, Math.round(Math.min(dw, dh) / 150));
-  const smoothed = blurDepth(normalized, dw, dh, br);
-  const outWidth = width * 2 + 2;
-  const out = Buffer.alloc(outWidth * height * 4);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const d = sampleDepth(smoothed, dw, dh, x, y, width, height);
-      const shift = d * intensity;
-      const leftSrcX = Math.min(Math.max(x + shift, 0), width - 1);
-      const lIdx = (y * outWidth + x) * 4;
-      out[lIdx] = sampleBilinear(pixels, width, height, leftSrcX, y, 0);
-      out[lIdx + 1] = sampleBilinear(pixels, width, height, leftSrcX, y, 1);
-      out[lIdx + 2] = sampleBilinear(pixels, width, height, leftSrcX, y, 2);
-      out[lIdx + 3] = 255;
-      const rightSrcX = Math.min(Math.max(x - shift, 0), width - 1);
-      const rIdx = (y * outWidth + width + 2 + x) * 4;
-      out[rIdx] = sampleBilinear(pixels, width, height, rightSrcX, y, 0);
-      out[rIdx + 1] = sampleBilinear(pixels, width, height, rightSrcX, y, 1);
-      out[rIdx + 2] = sampleBilinear(pixels, width, height, rightSrcX, y, 2);
-      out[rIdx + 3] = 255;
-    }
-    const d1 = (y * outWidth + width) * 4;
-    const d2 = (y * outWidth + width + 1) * 4;
-    out[d1] = out[d2] = 60; out[d1+1] = out[d2+1] = 60; out[d1+2] = out[d2+2] = 60; out[d1+3] = out[d2+3] = 255;
-  }
-  return { data: out, width: outWidth, height };
-}
-
-/**
- * Temporal stereogram — uses a FIXED base pattern across all frames.
- * Pass basePattern=null on first frame, reuse returned pattern for subsequent frames.
- */
 function generateTemporalStereogram(depthData, dw, dh, outputWidth, outputHeight, existingBasePattern) {
   let minD = Infinity, maxD = -Infinity;
   for (let i = 0; i < depthData.length; i++) {
@@ -622,47 +483,96 @@ function generateTemporalStereogram(depthData, dw, dh, outputWidth, outputHeight
   const normalized = new Float32Array(depthData.length);
   for (let i = 0; i < depthData.length; i++) normalized[i] = (depthData[i] - minD) / rangeD;
 
-  const stripWidth = Math.round(outputWidth / 7);
-  const maxShift = Math.round(stripWidth * 0.35);
+  // Same constants as the still-image stereogram: an absolute pixel separation
+  // (~72px near to ~90px far), because it models the gap between the viewer's
+  // pupils and must not scale with the frame size. Deriving it from the width
+  // gave ~183px on a 720p frame — wider than anyone can diverge.
+  const EYE_SEP = 180;
+  const MU = 1 / 3;
+  const sepFor = (z) => Math.round(((1 - MU * z) * EYE_SEP) / (2 - MU * z));
+  const FAR_SEP = sepFor(0);
 
+  // The base pattern is what keeps successive frames coherent — without it the
+  // dots re-randomise every frame and the video boils. Black and white, for the
+  // same reason as the still version: colour noise fuses badly.
   let basePattern = existingBasePattern;
   if (!basePattern) {
     let seed = 42;
-    function rand() { seed = (seed * 1664525 + 1013904223) & 0xffffffff; return (seed >>> 0) / 0xffffffff; }
+    const rand = () => {
+      seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+      return (seed >>> 0) / 0x100000000;
+    };
     basePattern = [];
     for (let y = 0; y < outputHeight; y++) {
-      const row = [];
-      for (let x = 0; x < stripWidth; x++) {
-        row.push([Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)]);
-      }
+      const row = new Uint8Array(FAR_SEP);
+      for (let x = 0; x < FAR_SEP; x++) row[x] = rand() < 0.5 ? 0 : 255;
       basePattern.push(row);
     }
   }
 
   const out = Buffer.alloc(outputWidth * outputHeight * 4);
+  const same = new Int32Array(outputWidth);
+  const zRow = new Float32Array(outputWidth);
+  const pix = new Uint8Array(outputWidth);
+
   for (let y = 0; y < outputHeight; y++) {
-    const strip = basePattern[y];
-    const same = new Int32Array(outputWidth);
-    for (let x = 0; x < outputWidth; x++) same[x] = x;
+    const rowPattern = basePattern[y] || basePattern[basePattern.length - 1];
     for (let x = 0; x < outputWidth; x++) {
-      const d = sampleDepth(normalized, dw, dh, x, y, outputWidth, outputHeight);
-      const sep = stripWidth - Math.round(d * maxShift);
-      const left = Math.round(x - sep / 2);
-      const right = left + sep;
-      if (left >= 0 && right < outputWidth) {
-        let l = left, r = right;
-        while (same[l] !== l) l = same[l];
-        while (same[r] !== r) r = same[r];
-        if (l !== r) { if (l < r) same[r] = l; else same[l] = r; }
-      }
+      zRow[x] = sampleDepth(normalized, dw, dh, x, y, outputWidth, outputHeight);
+      same[x] = x;
     }
-    for (let x = 0; x < outputWidth; x++) { let root = x; while (same[root] !== root) root = same[root]; same[x] = root; }
+
     for (let x = 0; x < outputWidth; x++) {
-      const c = strip[same[x] % stripWidth];
+      const z = zRow[x];
+      const sp = sepFor(z);
+      let left = x - ((sp + (sp & 1)) >> 1);
+      let right = left + sp;
+      if (left < 0 || right >= outputWidth) continue;
+
+      // Hidden-surface check — without it, points behind a nearer surface still
+      // get linked and shape edges smear.
+      let visible = true;
+      let zt = 0;
+      let t = 1;
+      do {
+        zt = z + (2 * (2 - MU * z) * t) / (MU * EYE_SEP);
+        const li = x - t;
+        const ri = x + t;
+        visible = (li < 0 || zRow[li] < zt) && (ri >= outputWidth || zRow[ri] < zt);
+        t++;
+      } while (visible && zt < 1);
+      if (!visible) continue;
+
+      let k = same[left];
+      while (k !== left && k !== right) {
+        if (k < right) {
+          left = k;
+          k = same[left];
+        } else {
+          same[left] = right;
+          left = right;
+          right = k;
+          k = same[left];
+        }
+      }
+      same[left] = right;
+    }
+
+    // Right to left so each pixel's partner is already decided. Unconstrained
+    // pixels take their value from the stable base pattern rather than fresh
+    // randomness, which is what holds the image still between frames.
+    for (let x = outputWidth - 1; x >= 0; x--) {
+      pix[x] = same[x] === x ? rowPattern[x % rowPattern.length] : pix[same[x]];
       const idx = (y * outputWidth + x) * 4;
-      out[idx] = c[0]; out[idx + 1] = c[1]; out[idx + 2] = c[2]; out[idx + 3] = 255;
+      out[idx] = pix[x];
+      out[idx + 1] = pix[x];
+      out[idx + 2] = pix[x];
+      out[idx + 3] = 255;
     }
   }
+
+  // Shape must match what the video loop destructures: .data/.width/.height
+  // plus the basePattern it threads into the next frame.
   return { data: out, width: outputWidth, height: outputHeight, basePattern };
 }
 

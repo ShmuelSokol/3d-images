@@ -199,6 +199,32 @@ railway up web --path-as-root --detach
 - "How it works" is gated on `!introVisible`, not on having jobs, so a returning user
   with zero jobs can still reopen it.
 
+## Job processing — READ THIS FIRST
+- **`scripts/worker.js` is what actually runs jobs.** `job-queue.ts` forks it as a child
+  process. There used to also be `src/lib/job-processor.ts` containing a near-identical
+  copy that nothing imported — fixes landed there and silently never ran in production
+  (a fixed Magic Eye, an HD render path, credit refunds). It has been deleted. Do not
+  recreate it: if you change how jobs are processed, change `scripts/worker.js`.
+- **The render maths has one source: `src/lib/server-anaglyph.ts`.** `npm run build`
+  compiles it to `scripts/lib/server-anaglyph.js` (`build:render-lib`) and the worker
+  requires that. `scripts/lib/` is generated — gitignored, built in Docker.
+  `generateTemporalStereogram` is worker-only (video temporal coherence).
+- **The worker stays warm.** It no longer exits after one job: it reports
+  `{done, jobId}` and waits for the next. The depth model therefore loads once per
+  container instead of once per job. Consequences to respect:
+  - `job-queue.ts` must NOT null `currentChild` after a job — that orphans a live process.
+  - The worker tracks `busy`; an idle worker exits immediately on SIGTERM, otherwise it
+    finishes the current job first.
+
+## Model loading and the cache volume
+- A Railway volume is mounted at `/app/.cache` (`HF_HOME`). Without it the cache is
+  ephemeral and **every container restart re-downloads ~1GB of model**, which a real user
+  then waits for — that was a 7-minute generation, not anything to do with HD.
+- **Railway mounts volumes root-owned and the app runs as `nextjs`.** `docker-entrypoint.sh`
+  chowns the mount as root then drops to `nextjs` via `gosu`. Without that, the model
+  download fails with EACCES and every job errors.
+- The model loads at `fp16`, roughly halving download and load time.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5

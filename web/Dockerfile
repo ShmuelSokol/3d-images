@@ -48,12 +48,25 @@ COPY --from=builder /app/node_modules ./node_modules
 
 # Worker script for child process job processing
 COPY --from=builder /app/scripts/worker.js ./scripts/worker.js
+# Render maths compiled from src/lib/server-anaglyph.ts at build time, so the
+# worker runs the same code as the app instead of a hand-copied duplicate.
+COPY --from=builder /app/scripts/lib ./scripts/lib
 
-USER nextjs
+# gosu lets the entrypoint fix the mounted volume's ownership as root and then
+# hand off to the unprivileged user, rather than running the app as root.
+RUN apt-get update && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Stays root only long enough for the entrypoint to chown the volume; the app
+# itself runs as nextjs via gosu.
 EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 # More memory for large depth model (~335MB) + image processing
 ENV NODE_OPTIONS="--max-old-space-size=1024"
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["node", "server.js"]

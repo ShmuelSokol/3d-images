@@ -82,56 +82,109 @@ class JobQueue {
         // Process in a child process so the main server stays responsive
         await this.runInChild(pending.id);
 
-        this.currentChild = null;
+        // Deliberately keep `currentChild`: the worker stays warm for the next
+        // job so the depth model isn't reloaded. Clearing it here would orphan
+        // a live process and fork a second one on the next job.
         this.currentJobId = null;
       }
     } catch (err) {
       console.error("[queue] Unexpected error:", err);
     } finally {
       this.running = false;
-      this.currentChild = null;
       this.currentJobId = null;
+      // `currentChild` is intentionally left alive between drains — see above.
     }
   }
 
-  private runInChild(jobId: string): Promise<void> {
-    return new Promise((resolve) => {
-      const workerPath = join(process.cwd(), "scripts", "worker.js");
+  /**
+   * Get a warm worker, starting one if needed.
+   *
+   * The worker used to be forked per job and exit when done, which meant every
+   * single job reloaded the ~1GB depth model from scratch (and re-downloaded it
+   * whenever the container had restarted, since the cache dir is ephemeral).
+   * One long-lived worker loads it once and renders every job after that.
+   */
+  private async getWorker(): Promise<ChildProcess> {
+    if (this.currentChild && !this.currentChild.killed && this.currentChild.connected) {
+      return this.currentChild;
+    }
 
-      const child = fork(workerPath, [], {
-        env: { ...process.env },
-        stdio: ["pipe", "inherit", "inherit", "ipc"],
-      });
+    const workerPath = join(process.cwd(), "scripts", "worker.js");
+    const child = fork(workerPath, [], {
+      env: { ...process.env },
+      stdio: ["pipe", "inherit", "inherit", "ipc"],
+    });
+    this.currentChild = child;
 
-      this.currentChild = child;
+    // A worker that dies (crash, OOM, SIGTERM) must not be reused.
+    const drop = () => {
+      if (this.currentChild === child) this.currentChild = null;
+    };
+    child.on("exit", drop);
+    child.on("error", (err) => {
+      console.error("[queue] Worker error:", err);
+      drop();
+    });
 
-      let sent = false;
-
-      child.on("message", (msg: { ready?: boolean }) => {
-        if (msg.ready && !sent) {
-          sent = true;
-          child.send({ jobId });
+    await new Promise<void>((resolve) => {
+      const onReady = (msg: { ready?: boolean }) => {
+        if (msg?.ready) {
+          child.off("message", onReady);
+          resolve();
         }
-      });
+      };
+      child.on("message", onReady);
+      // If it dies before signalling ready, don't hang the queue forever.
+      child.once("exit", () => resolve());
+    });
 
-      child.on("exit", () => {
+    return child;
+  }
+
+  private async runInChild(jobId: string): Promise<void> {
+    const child = await this.getWorker();
+    if (!child.connected) {
+      console.error(`[queue] Worker unavailable for ${jobId}`);
+      return;
+    }
+
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        child.off("message", onMessage);
+        child.off("exit", onExit);
+        clearTimeout(timer);
         resolve();
-      });
+      };
 
-      child.on("error", (err) => {
-        console.error(`[queue] Worker error for ${jobId}:`, err);
-        resolve();
-      });
+      const onMessage = (msg: { done?: boolean; jobId?: string }) => {
+        if (msg?.done && msg.jobId === jobId) finish();
+      };
+      // A crash mid-job still has to release the queue.
+      const onExit = () => {
+        if (this.currentChild === child) this.currentChild = null;
+        finish();
+      };
 
-      // Timeout: if worker doesn't finish in 6 hours, kill it
-      setTimeout(() => {
+      child.on("message", onMessage);
+      child.on("exit", onExit);
+
+      // Timeout: if the worker doesn't finish in 6 hours, kill it
+      const timer = setTimeout(() => {
         if (!child.killed) {
           console.error(`[queue] Worker timeout for ${jobId}, killing`);
           child.kill("SIGKILL");
         }
+        if (this.currentChild === child) this.currentChild = null;
+        finish();
       }, 6 * 60 * 60 * 1000);
+
+      child.send({ jobId });
     });
   }
+
 }
 
 export const jobQueue = new JobQueue();

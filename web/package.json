@@ -4,7 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run build:render-lib && next build",
+    "build:render-lib": "tsc src/lib/server-anaglyph.ts --outDir scripts/lib --module commonjs --target es2020 --skipLibCheck --esModuleInterop --declaration false",
+
     "start": "next start",
     "lint": "next lint",
     "db:push:prod": "node scripts/db-push-guarded.js",
@@ -24,6 +26,7 @@
     "react": "^18",
     "react-dom": "^18",
     "recharts": "^3.8.0",
+    "resend": "^6.28.1",
     "sharp": "^0.34.5",
     "stripe": "^20.4.1"
   },

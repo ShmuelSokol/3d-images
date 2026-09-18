@@ -139,7 +139,9 @@ export async function GET(
       })
       .flatten({ background: { r: 255, g: 255, b: 255 } })
       .withMetadata({ density: DPI })
-      .jpeg({ quality: 95, mozjpeg: true, chromaSubsampling: "4:4:4" })
+      // No mozjpeg: measured ~23x slower for ~5% smaller, and the user is
+      // waiting on a download with no progress indication.
+      .jpeg({ quality: 95, chromaSubsampling: "4:4:4" })
       .toBuffer();
 
     const name = `3d-${format}-${sizeKey}-${DPI}dpi.jpg`;

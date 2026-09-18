@@ -12,6 +12,13 @@ const OnboardingFlow = lazy(() => import("./OnboardingFlow"));
  * Read each image's pixel dimensions in the browser so the settings dialog can
  * tell the user what a given print size would actually cost them in sharpness.
  */
+function formatElapsed(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const m = Math.floor(totalSeconds / 60);
+  const sec = totalSeconds % 60;
+  return `${m}m ${String(sec).padStart(2, "0")}s`;
+}
+
 async function measureImages(
   files: File[]
 ): Promise<{ file: File; width: number; height: number }[]> {
@@ -56,6 +63,8 @@ interface Job {
   duration: number | null;
   frameCount: number | null;
   framesDone: number;
+  startedAt?: string | null;
+  processingMs?: number | null;
   isPublic?: boolean;
   hiRes?: boolean;
   moderationStatus?: string;
@@ -184,6 +193,14 @@ export default function ImageProcessor() {
   // false) keeps it hidden during that first render so returning visitors never
   // see it flash in and back out.
   const [seenIntro, setSeenIntro] = useState<boolean | null>(null);
+  // Ticks once a second purely to advance the elapsed-time readout; job state
+  // itself only refreshes on the normal poll.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     try {
@@ -1080,6 +1097,17 @@ export default function ImageProcessor() {
             <div className="w-2.5 h-2.5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
             <span className="text-[11px] text-cyan-400 font-medium whitespace-nowrap">
               {activeCount} processing
+              {(() => {
+                const running = jobs.find(
+                  (j) => j.status === "processing" && j.startedAt
+                );
+                if (!running?.startedAt) return null;
+                const secs = Math.max(
+                  0,
+                  Math.round((nowTick - new Date(running.startedAt).getTime()) / 1000)
+                );
+                return <> &middot; {formatElapsed(secs)}</>;
+              })()}
             </span>
           </div>
         )}
@@ -1460,6 +1488,11 @@ export default function ImageProcessor() {
                     <div className="flex flex-wrap items-center gap-3">
                     <h2 className="text-sm font-semibold truncate flex-1 text-gray-100">
                       {selected.fileName}
+                      {selected.processingMs ? (
+                        <span className="ml-2 font-normal text-[11px] text-gray-500 tabular-nums">
+                          took {formatElapsed(Math.round(selected.processingMs / 1000))}
+                        </span>
+                      ) : null}
                     </h2>
                     <div className="flex gap-1.5">
                       <button
@@ -1728,7 +1761,7 @@ export default function ImageProcessor() {
                           )}
                         </div>
                         {/* Active image or compare slider */}
-                        <div className="relative group">
+                        <div className={`relative group ${activeTab === "stereogram" ? "overflow-x-auto" : ""}`}>
                           {canCompare ? (
                             <Suspense fallback={<div className="w-full aspect-video bg-gray-800/50 rounded-xl animate-pulse" />}>
                               <CompareSlider
@@ -1746,9 +1779,29 @@ export default function ImageProcessor() {
                                 alt={current.labelFull}
                                 loading="lazy"
                                 decoding="async"
-                                className="w-full rounded-xl border border-gray-800/50 cursor-zoom-in transition-all hover:border-gray-700"
+                                className={
+                                  current.id === "stereogram"
+                                    ? // A Magic Eye only fuses at 1:1. Its dot
+                                      // separation is an absolute pixel distance
+                                      // (~72-90px) chosen to match the gap between
+                                      // your pupils, so scaling the image to the
+                                      // column width shrinks it to ~50-60px and the
+                                      // illusion collapses. Show it at native size
+                                      // and let it scroll instead.
+                                      "max-w-none rounded-xl border border-gray-800/50 cursor-zoom-in transition-all hover:border-gray-700"
+                                    : "w-full rounded-xl border border-gray-800/50 cursor-zoom-in transition-all hover:border-gray-700"
+                                }
                                 onClick={() => setLightboxUrl(current.url)}
                               />
+                              {current.id === "stereogram" && (
+                                <p className="mt-2 text-[11px] text-gray-500 leading-relaxed">
+                                  Shown at actual size — a Magic Eye only works at 100%, so
+                                  scroll rather than zoom out. Look <em>through</em> the image
+                                  and let your eyes relax until the pattern doubles and locks.
+                                  Relaxing outward (not crossing) gives the intended depth;
+                                  crossing your eyes works too but turns the shape inside out.
+                                </p>
+                              )}
                               {/* Overlay actions */}
                               <div className="absolute bottom-3 left-3 right-3 flex justify-between items-end opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
                                 <span className="text-[10px] text-white/60 bg-black/40 backdrop-blur-sm rounded px-2 py-0.5 pointer-events-none">
@@ -1974,6 +2027,21 @@ export default function ImageProcessor() {
                         ? `Processing frame ${selected.framesDone} / ${selected.frameCount}`
                         : "Processing..."}
                   </p>
+                  {selected.status === "processing" && selected.startedAt && (
+                    <p className="text-xs text-cyan-400 tabular-nums mt-1">
+                      {formatElapsed(
+                        Math.max(
+                          0,
+                          Math.round(
+                            (nowTick - new Date(selected.startedAt).getTime()) / 1000
+                          )
+                        )
+                      )}
+                      {selected.hiRes && (
+                        <span className="text-gray-500"> &middot; HD takes longer</span>
+                      )}
+                    </p>
+                  )}
                   {selected.mediaType === "video" &&
                     selected.frameCount &&
                     selected.frameCount > 0 && (
