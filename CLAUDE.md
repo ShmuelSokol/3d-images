@@ -216,6 +216,21 @@ railway up web --path-as-root --detach
   - The worker tracks `busy`; an idle worker exits immediately on SIGTERM, otherwise it
     finishes the current job first.
 
+## Video pipeline
+- Intermediate frames are **JPEG, not PNG**. They go straight into ffmpeg and are
+  re-encoded to H.264, so lossless bought nothing and cost ~20x the bytes to write,
+  upload and read back.
+- Per-frame backup uploads (which exist so a job can resume after a restart) are
+  **drained every 4 frames, and once more before reassembly**. Unbounded, a whole clip's
+  uploads compete with the rendering on the critical path; undrained at the end, stragglers
+  land after the cleanup pass and leak orphaned frames in the bucket.
+- **Changing the frame extension invalidates in-flight resumes.** A job that backed up
+  `.png` frames and resumes on code looking for `.jpg` re-renders from frame 0 — it fails
+  cleanly, but drain the queue before deploying such a change.
+- The UI time estimate lives in `ImageProcessor.tsx` and must be **calibrated against real
+  jobs**. It was left at large-model numbers (25s/frame) after video moved to the small
+  model, quoting an hour for a 14-minute job and talking users out of starting.
+
 ## Depth model tiering
 - **Standard jobs use `depth-anything-v2-small`; HD jobs use `-large`.** Measured warm
   inference: 0.97s vs 11.5s — ~12x — for a depth map that is near-identical on real

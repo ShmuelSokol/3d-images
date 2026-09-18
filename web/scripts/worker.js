@@ -163,15 +163,15 @@ async function main() {
               const pad = String(i + 1).padStart(4, "0");
               try {
                 const downloads = [];
-                if (doAnaglyph) downloads.push({ key: "anaglyph", dir: outAnaglyph, remote: `${FRAME_PREFIX}/anaglyph-${pad}.png` });
-                if (doStereo) downloads.push({ key: "stereo", dir: outStereo, remote: `${FRAME_PREFIX}/stereo-${pad}.png` });
-                if (doSbs) downloads.push({ key: "sbs", dir: outSbs, remote: `${FRAME_PREFIX}/sbs-${pad}.png` });
+                if (doAnaglyph) downloads.push({ key: "anaglyph", dir: outAnaglyph, remote: `${FRAME_PREFIX}/anaglyph-${pad}.jpg` });
+                if (doStereo) downloads.push({ key: "stereo", dir: outStereo, remote: `${FRAME_PREFIX}/stereo-${pad}.jpg` });
+                if (doSbs) downloads.push({ key: "sbs", dir: outSbs, remote: `${FRAME_PREFIX}/sbs-${pad}.jpg` });
 
                 const results = await Promise.all(downloads.map(d => supabase.storage.from("3d-images").download(d.remote)));
                 let failed = false;
                 for (let r = 0; r < results.length; r++) {
                   if (results[r].error) { failed = true; break; }
-                  writeFileSync(join(downloads[r].dir, `frame-${pad}.png`), Buffer.from(await results[r].data.arrayBuffer()));
+                  writeFileSync(join(downloads[r].dir, `frame-${pad}.jpg`), Buffer.from(await results[r].data.arrayBuffer()));
                 }
                 if (failed) {
                   console.error(`[worker] Missing resume frame ${i + 1}, reprocessing from here`);
@@ -198,6 +198,7 @@ async function main() {
 
           // For temporal stereogram: fixed base pattern across all frames
           let stereoBasePattern = null;
+          const inFlightUploads = [];
 
           for (let i = actualResume; i < frameFiles.length; i++) {
             // Check for shutdown request between frames
@@ -228,36 +229,60 @@ async function main() {
 
             if (doAnaglyph) {
               const anaglyph = generateAnaglyphServer(rawImg, depth.data, depth.width, depth.height, job.intensity, job.colorMode === "classic" ? "classic" : "dubois", job.fillOcclusion);
-              const anaPng = await sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).png().toBuffer();
-              writeFileSync(join(outAnaglyph, `frame-${pad}.png`), anaPng);
-              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/anaglyph-${pad}.png`, anaPng, { contentType: "image/png", upsert: true }));
+              // JPEG, not PNG: these frames are fed straight to ffmpeg and
+              // re-encoded to H.264, so lossless costs ~20x the bytes to write,
+              // upload and read back for nothing.
+              const anaJpg = await sharp(anaglyph.data, { raw: { width: anaglyph.width, height: anaglyph.height, channels: 4 } }).jpeg({ quality: 92, chromaSubsampling: "4:4:4" }).toBuffer();
+              writeFileSync(join(outAnaglyph, `frame-${pad}.jpg`), anaJpg);
+              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/anaglyph-${pad}.jpg`, anaJpg, { contentType: "image/jpeg", upsert: true }));
             }
             if (doStereo) {
               const stereoResult = generateTemporalStereogram(depth.data, depth.width, depth.height, frameW, frameH, stereoBasePattern);
               if (!stereoBasePattern) stereoBasePattern = stereoResult.basePattern;
-              const sterPng = await sharp(stereoResult.data, { raw: { width: stereoResult.width, height: stereoResult.height, channels: 4 } }).png().toBuffer();
-              writeFileSync(join(outStereo, `frame-${pad}.png`), sterPng);
-              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/stereo-${pad}.png`, sterPng, { contentType: "image/png", upsert: true }));
+              // Dot patterns need crisp edges, so keep chroma full and quality high.
+              const sterJpg = await sharp(stereoResult.data, { raw: { width: stereoResult.width, height: stereoResult.height, channels: 4 } }).jpeg({ quality: 95, chromaSubsampling: "4:4:4" }).toBuffer();
+              writeFileSync(join(outStereo, `frame-${pad}.jpg`), sterJpg);
+              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/stereo-${pad}.jpg`, sterJpg, { contentType: "image/jpeg", upsert: true }));
             }
             if (doSbs) {
               const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
-              const sbsPng = await sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).png().toBuffer();
-              writeFileSync(join(outSbs, `frame-${pad}.png`), sbsPng);
-              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/sbs-${pad}.png`, sbsPng, { contentType: "image/png", upsert: true }));
+              const sbsJpg = await sharp(sbs.data, { raw: { width: sbs.width, height: sbs.height, channels: 4 } }).jpeg({ quality: 92 }).toBuffer();
+              writeFileSync(join(outSbs, `frame-${pad}.jpg`), sbsJpg);
+              backupUploads.push(supabase.storage.from("3d-images").upload(`${FRAME_PREFIX}/sbs-${pad}.jpg`, sbsJpg, { contentType: "image/jpeg", upsert: true }));
             }
 
-            // Upload frames to Supabase for resume capability (fire-and-forget)
-            Promise.all(backupUploads).catch(err => console.error(`[worker] Frame ${i + 1} backup upload failed:`, err.message));
+            // Upload frames to Supabase for resume capability. Fire-and-forget,
+            // but drained every few frames: letting a whole clip's worth of
+            // uploads run unbounded starves the rendering that's actually on the
+            // critical path, and holds every encoded frame in memory at once.
+            inFlightUploads.push(
+              Promise.all(backupUploads).catch((err) =>
+                console.error(`[worker] Frame ${i + 1} backup upload failed:`, err.message)
+              )
+            );
+            if (inFlightUploads.length >= 4) {
+              await Promise.all(inFlightUploads);
+              inFlightUploads.length = 0;
+            }
 
             if (i % 5 === 0 || i === frameFiles.length - 1) {
               await prisma.image.update({ where: { id: jobId }, data: { framesDone: i + 1 } });
             }
           }
 
+          // Drain any trailing backup uploads. Without this, up to three can
+          // still be in flight when the end-of-job cleanup lists the bucket —
+          // they'd land after the list and never be deleted, leaking orphaned
+          // frames per video job.
+          if (inFlightUploads.length > 0) {
+            await Promise.all(inFlightUploads);
+            inFlightUploads.length = 0;
+          }
+
           // Reassemble selected videos
           const formatCount = [doAnaglyph, doStereo, doSbs].filter(Boolean).length;
           console.log(`[worker] Reassembling ${formatCount} video(s)`);
-          const ffmpegCmd = (inDir, outPath, crf = 23, extraFlags = "") => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.png" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf ${crf} ${extraFlags} -shortest -movflags +faststart "${outPath}"`;
+          const ffmpegCmd = (inDir, outPath, crf = 23, extraFlags = "") => `ffmpeg -y -framerate ${fps} -i "${inDir}/frame-%04d.jpg" -i "${inputPath}" -map 0:v -map 1:a? -c:v libx264 -c:a aac -pix_fmt yuv420p -crf ${crf} ${extraFlags} -shortest -movflags +faststart "${outPath}"`;
           if (doAnaglyph) execSync(ffmpegCmd(outAnaglyph, anaglyphPath, 23), { stdio: "pipe" });
           // Stereogram patterns are high-entropy noise — CRF 31 keeps quality while staying under 50MB Supabase upload limit
           if (doStereo) execSync(ffmpegCmd(outStereo, stereoPath, 31), { stdio: "pipe" });

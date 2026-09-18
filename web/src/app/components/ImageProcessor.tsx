@@ -1346,8 +1346,12 @@ export default function ImageProcessor() {
               const frames = Math.ceil(pendingVideoFile.duration * 15);
               const formatCount = Object.values(videoFormats).filter(Boolean).length;
               if (formatCount === 0) return null;
-              // ~25s base (depth) + ~5s per format per frame
-              const secPerFrame = 25 + formatCount * 5;
+              // Calibrated against real jobs: a 121-frame clip with one format
+              // measured 7.1s/frame end to end. The old numbers (25s base) were
+              // from when video used the large depth model — they over-estimated
+              // by about 4x, which quoted an hour for a job that takes fifteen
+              // minutes and talked people out of starting it.
+              const secPerFrame = 5 + formatCount * 2;
               const totalSec = frames * secPerFrame;
               const hours = Math.floor(totalSec / 3600);
               const mins = Math.floor((totalSec % 3600) / 60);
