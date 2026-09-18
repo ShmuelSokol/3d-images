@@ -161,6 +161,41 @@ export async function PATCH(
       const job = await prisma.image.findUnique({ where: { id: params.id } });
       if (!job) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+      // A rotate spawns a brand-new render, so it costs a credit like any
+      // other. It used to be free, which made it a way to process images
+      // without ever being charged.
+      const rotateUserId = getUserId(req);
+      // A rotated HD job renders on the large model all over again, so it needs
+      // the same entitlement as a fresh HD upload — carrying `hiRes` across
+      // unchecked would let someone rotate one paid HD result repeatedly for
+      // free, and keep getting HD long after a subscription lapsed.
+      let rotateHiRes = job.hiRes;
+      let rotateSpendsHd = false;
+      if (rotateUserId) {
+        const owner = await prisma.user.findUnique({
+          where: { id: rotateUserId },
+          select: { imageCredits: true, plan: true, hdCredits: true },
+        });
+        if (!owner || owner.imageCredits <= 0) {
+          return NextResponse.json(
+            { error: "No credits remaining. Purchase more or redeem a coupon.", code: "NO_CREDITS" },
+            { status: 403 }
+          );
+        }
+        if (rotateHiRes && owner.plan !== "pro") {
+          if (owner.hdCredits > 0) {
+            rotateSpendsHd = true;
+          } else {
+            // Quietly fall back to a standard render rather than refusing the
+            // rotate outright — they still get their rotated image.
+            rotateHiRes = false;
+          }
+        }
+      } else {
+        // Anonymous sessions never have HD entitlement.
+        rotateHiRes = false;
+      }
+
       // Download original
       const res = await fetch(job.originalUrl);
       if (!res.ok) return NextResponse.json({ error: "Download failed" }, { status: 500 });
@@ -199,10 +234,24 @@ export async function PATCH(
           fillOcclusion: job.fillOcclusion,
           status: "pending",
           mediaType: "image",
+          // Carry HD through only where it's still paid for (checked above).
+          hiRes: rotateHiRes,
+          hdCreditUsed: rotateSpendsHd,
           sessionId,
           userId,
         },
       });
+
+      // Charge only once the new job row exists, same rule as upload.
+      if (userId) {
+        await prisma.user.update({
+          where: { id: userId },
+          data: {
+            imageCredits: { decrement: 1 },
+            ...(rotateSpendsHd ? { hdCredits: { decrement: 1 } } : {}),
+          },
+        });
+      }
 
       jobQueue.kick().catch(console.error);
       return NextResponse.json(newJob);

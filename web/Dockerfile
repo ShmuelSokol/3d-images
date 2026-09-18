@@ -1,5 +1,7 @@
 # Use Debian slim (not Alpine) — onnxruntime-node needs glibc
-FROM node:18-slim AS base
+# node:20 — 18 is end-of-life and @supabase/supabase-js warns about it on every
+# boot. Still Debian slim, not Alpine: onnxruntime-node needs glibc.
+FROM node:20-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ffmpeg && rm -rf /var/lib/apt/lists/*
 
 # Dependencies

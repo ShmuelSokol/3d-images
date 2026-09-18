@@ -329,6 +329,38 @@ export async function rawToPng(image: RawImage): Promise<Buffer> {
 }
 
 /**
+ * The pipeline's working size. Depth estimation runs here regardless of output
+ * resolution — it's the model's native scale, and more pixels don't improve it.
+ */
+export const WORKING_MAX_DIM = 1024;
+
+/**
+ * Auto-rotate by EXIF and shrink to the working size.
+ *
+ * Shared so the depth editor and the worker can't drift apart on what "the
+ * image the depth map was computed from" means — if they disagree, edited depth
+ * maps line up against the wrong pixels.
+ */
+export async function toWorkingSize(
+  input: Buffer
+): Promise<{ buffer: Buffer; width: number; height: number }> {
+  const rotated = Buffer.from(await sharp(input).rotate().toBuffer());
+  const meta = await sharp(rotated).metadata();
+  let w = meta.width || 0;
+  let h = meta.height || 0;
+  if (w <= WORKING_MAX_DIM && h <= WORKING_MAX_DIM) {
+    return { buffer: rotated, width: w, height: h };
+  }
+  const scale = WORKING_MAX_DIM / Math.max(w, h);
+  w = Math.round(w * scale);
+  h = Math.round(h * scale);
+  const buffer = Buffer.from(
+    await sharp(rotated).resize(w, h).jpeg({ quality: 85 }).toBuffer()
+  );
+  return { buffer, width: w, height: h };
+}
+
+/**
  * Encode raw RGBA to JPEG. Used for high-resolution output, where PNG would
  * be tens of megabytes and can exceed the storage object-size limit.
  */

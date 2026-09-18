@@ -7,7 +7,7 @@ Upload photos or videos → server-side AI estimates depth per pixel → generat
 - **Framework**: Next.js 14, TypeScript, TailwindCSS
 - **Database**: Prisma 5 + Supabase PostgreSQL
 - **Storage**: Supabase Storage (bucket: `3d-images`)
-- **Deployment**: Railway (standalone Docker, node:18-slim)
+- **Deployment**: Railway (standalone Docker, node:20-slim)
 - **Depth AI**: `@huggingface/transformers` v3 + `onnxruntime-node` (server-side)
   - Model: `onnx-community/depth-anything-v2-large` (cached in HF_HOME=/app/.cache)
 - **Video**: ffmpeg for frame extraction + reassembly (MP4 output)
@@ -33,7 +33,7 @@ Upload photos or videos → server-side AI estimates depth per pixel → generat
 - `src/app/api/jobs/[id]/route.ts` — GET (single job) + DELETE
 - `src/lib/anaglyph.ts` — original client-side algorithm (kept for reference)
 - `prisma/schema.prisma` — Image model with status/mediaType/progress fields
-- `Dockerfile` — node:18-slim + ffmpeg + onnxruntime-node
+- `Dockerfile` — node:20-slim + ffmpeg + onnxruntime-node
 - `scripts/migrate.js` — raw SQL migrations (DO NOT use prisma db push)
 
 ## Dev Commands
@@ -216,6 +216,16 @@ railway up web --path-as-root --detach
   - The worker tracks `busy`; an idle worker exits immediately on SIGTERM, otherwise it
     finishes the current job first.
 
+## Depth model tiering
+- **Standard jobs use `depth-anything-v2-small`; HD jobs use `-large`.** Measured warm
+  inference: 0.97s vs 11.5s — ~12x — for a depth map that is near-identical on real
+  photos, and the renderer blurs it before use anyway, discarding most of the large
+  model's extra detail.
+- **Video always uses the small model.** It runs per frame: at ~6.5s a frame the large
+  model needs over an hour for a 60s clip.
+- Estimators are cached **per model** in a Map, so a warm worker that sees both job types
+  holds both rather than reloading on every switch.
+
 ## Model loading and the cache volume
 - A Railway volume is mounted at `/app/.cache` (`HF_HOME`). Without it the cache is
   ephemeral and **every container restart re-downloads ~1GB of model**, which a real user
@@ -243,7 +253,7 @@ railway up web --path-as-root --detach
 - NEXT_PUBLIC_ vars must be available at build time
 - Health check at `/api/health` — returns 503 `schema-missing` if any critical table is gone
 - DB table prefix: `td_` (3d = td)
-- Dockerfile uses node:18-slim (Debian), NOT Alpine — onnxruntime-node needs glibc
+- Dockerfile uses node:20-slim (Debian), NOT Alpine — onnxruntime-node needs glibc
 
 ## DANGER — DB safety (post-2026-04-19 migration)
 - 3D Images now has its own dedicated Supabase project: `fslwkomtwcxsnprhknyw` (us-east-1). Migrated off shared `ushngszdltlctmqlwgot` after OCR Hebrew's schema was wiped by a stray `db push` from a sibling project.

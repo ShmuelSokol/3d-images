@@ -7,6 +7,7 @@ import {
   generateColorMap,
   rawToPng,
   depthToPng,
+  toWorkingSize,
 } from "@/lib/server-anaglyph";
 
 export async function PUT(
@@ -69,21 +70,9 @@ export async function PUT(
     }
     const inputBuffer = Buffer.from(await res.arrayBuffer());
 
-    // 5. Auto-rotate + resize to max 1024px (same as job-processor.ts)
-    const rotated = Buffer.from(await sharp(inputBuffer).rotate().toBuffer());
-    const meta = await sharp(rotated).metadata();
-    let w = meta.width || 0;
-    let h = meta.height || 0;
-    const maxDim = 1024;
-    let resized: Buffer = rotated;
-    if (w > maxDim || h > maxDim) {
-      const s = maxDim / Math.max(w, h);
-      w = Math.round(w * s);
-      h = Math.round(h * s);
-      resized = Buffer.from(
-        await sharp(rotated).resize(w, h).jpeg({ quality: 85 }).toBuffer()
-      );
-    }
+    // 5. Auto-rotate + shrink to the shared working size. This must match what
+    // the worker does, or an edited depth map lines up against different pixels.
+    const { buffer: resized } = await toWorkingSize(inputBuffer);
 
     // 6. Decode resized original to raw RGBA
     const { data: rgbaData, info: rgbaInfo } = await sharp(resized)

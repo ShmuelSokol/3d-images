@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionId, getUserId, setSessionCookie } from "@/lib/session";
 import { rateLimit } from "@/lib/rate-limit";
+import { sendAlert } from "@/lib/notify";
 
 const REASONS = ["sexual", "violent", "hateful", "copyright", "other"] as const;
 
@@ -73,6 +74,24 @@ export async function POST(
         ...(hide ? { moderationStatus: "flagged", hiddenAt: new Date() } : {}),
       },
     });
+
+    // Tell the admin out of band — otherwise a report is only ever seen by
+    // someone who happens to open the moderation tab. Deliberately not awaited:
+    // the reporter's request shouldn't wait on, or fail with, an email.
+    void sendAlert(
+      hide ? "3D Images: content reported and hidden" : "3D Images: content reported",
+      [
+        `A shared result was reported as: ${reason}`,
+        detail ? `Detail: ${detail}` : null,
+        hide
+          ? "It has been hidden from the library immediately, pending review."
+          : "It was already reviewed and cleared, so it remains visible.",
+        "",
+        `Review: https://3d.kbrlive.com/admin (Moderation tab)`,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
 
     const res = NextResponse.json({ ok: true, hidden: hide });
     setSessionCookie(res, sessionId, req);

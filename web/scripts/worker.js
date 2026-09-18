@@ -35,19 +35,28 @@ async function main() {
         fast: "onnx-community/depth-anything-v2-small",
         hd: "onnx-community/depth-anything-v2-large",
       };
-      const model = MODELS.hd;
       // fp16 rather than the default fp32: roughly half the download and half
       // the load time, for a depth map that is smoothed and normalised anyway.
       const MODEL_DTYPE = "fp16";
 
       // --- Depth estimator ---
-      let estimator = null;
-      async function estimateDepth(imageBuffer) {
-        if (!estimator) {
-          console.log(`[worker] Loading model: ${model}`);
-          estimator = await pipeline("depth-estimation", model, { device: "cpu", dtype: MODEL_DTYPE });
-          console.log(`[worker] Model ready: ${model}`);
+      // Cached per model: a warm worker may see both standard and HD jobs, and
+      // reloading on every switch would undo the point of staying alive.
+      const estimators = new Map();
+      async function getEstimator(modelName) {
+        if (!estimators.has(modelName)) {
+          console.log(`[worker] Loading model: ${modelName}`);
+          estimators.set(
+            modelName,
+            await pipeline("depth-estimation", modelName, { device: "cpu", dtype: MODEL_DTYPE })
+          );
+          console.log(`[worker] Model ready: ${modelName}`);
         }
+        return estimators.get(modelName);
+      }
+
+      async function estimateDepth(imageBuffer, modelName = MODELS.fast) {
+        const estimator = await getEstimator(modelName);
         const { data: pixels, info } = await sharp(imageBuffer)
           .removeAlpha()
           .raw()
@@ -206,7 +215,9 @@ async function main() {
 
             const framePath = join(framesDir, frameFiles[i]);
             const frameBuffer = Buffer.from(readFileSync(framePath));
-            const depth = await estimateDepth(frameBuffer);
+            // Per frame, so model speed dominates completely: at ~6.5s a frame
+            // the large model would take over an hour for a 60s clip.
+            const depth = await estimateDepth(frameBuffer, MODELS.fast);
 
             const { data: rawData, info: rawInfo } = await sharp(frameBuffer).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
             const rawImg = { data: rawData, width: rawInfo.width, height: rawInfo.height };
@@ -306,23 +317,20 @@ async function main() {
         if (!res.ok) throw new Error(`Download failed: ${res.status}`);
         const inputBuffer = Buffer.from(await res.arrayBuffer());
 
+        // Shared with the depth editor — if the two disagree on the working
+        // size, an edited depth map lines up against different pixels.
         const rotated = Buffer.from(await sharp(inputBuffer).rotate().toBuffer());
         const meta = await sharp(rotated).metadata();
-        let w = meta.width || 0;
-        let h = meta.height || 0;
-        const maxDim = 1024;
-        let resized = rotated;
-        if (w > maxDim || h > maxDim) {
-          const s = maxDim / Math.max(w, h);
-          w = Math.round(w * s);
-          h = Math.round(h * s);
-          resized = Buffer.from(await sharp(rotated).resize(w, h).jpeg({ quality: 85 }).toBuffer());
-        }
+        const { buffer: resized, width: w, height: h } = await toWorkingSize(inputBuffer);
         const jpegBuf = Buffer.from(await sharp(resized).jpeg({ quality: 85 }).toBuffer());
 
         // Depth always runs on the <=1024px copy — that's the model's working
         // resolution, more pixels wouldn't improve it.
-        const depth = await estimateDepth(jpegBuf);
+        // The small model runs ~12x faster (0.97s vs 11.5s warm, measured) and
+        // its depth map is near-identical here — and the renderer blurs the
+        // depth before using it anyway, discarding most of the large model's
+        // extra fidelity. HD jobs still get the large model.
+        const depth = await estimateDepth(jpegBuf, job.hiRes ? MODELS.hd : MODELS.fast);
 
         // HD renders the 3D effect at the image's own resolution instead of the
         // 1024px working copy. The renderers sample depth by relative position,
@@ -474,6 +482,7 @@ const {
   rawToPngBW,
   generateAutostereogram,
   generateSideBySide,
+  toWorkingSize,
 } = require(path.join(__dirname, "lib", "server-anaglyph.js"));
 
 function generateTemporalStereogram(depthData, dw, dh, outputWidth, outputHeight, existingBasePattern) {
