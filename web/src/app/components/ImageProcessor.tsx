@@ -246,7 +246,6 @@ export default function ImageProcessor() {
   // intent up front lets us recommend the right settings before spending a credit.
   const [printIntent, setPrintIntent] = useState<string>("none");
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   // ── Polling ──
   const fetchAllJobs = useCallback(async () => {
@@ -268,11 +267,19 @@ export default function ImageProcessor() {
       if (res.ok) {
         const job = await res.json();
         setJobs((prev) => prev.map((j) => (j.id === id ? job : j)));
+        return;
+      }
+      // Don't just swallow it: a single-job poll that starts failing (a 404
+      // after the session changed, say) would otherwise leave the card stuck on
+      // "Processing" forever. Fall back to the full list, which is scoped to
+      // whoever is actually calling.
+      if (res.status === 404) {
+        await fetchAllJobs();
       }
     } catch {
-      /* ignore poll errors */
+      /* transient network error — the next tick will retry */
     }
-  }, []);
+  }, [fetchAllJobs]);
 
   const fetchCredits = useCallback(async () => {
     try {
@@ -294,34 +301,35 @@ export default function ImageProcessor() {
     fetchAllJobs();
   }, [fetchAllJobs]);
 
-  const hasActiveRef = useRef(false);
-  const pollModeRef = useRef<string | null>(null);
+  // Derive the polling mode as plain values, OUTSIDE the effect, so the effect
+  // depends on the mode rather than on the `jobs` array itself.
+  //
+  // This previously ran on every `jobs` change and bailed out early when the
+  // mode was unchanged — but React had already run the cleanup by then, which
+  // cleared the interval. The early return then skipped creating a new one, so
+  // the very first poll that updated `jobs` silently killed polling for good and
+  // the screen sat on "Processing" until a manual refresh.
+  const hasActive = jobs.some(
+    (j) => j.status === "pending" || j.status === "processing"
+  );
+  // Selective polling: if a single job is selected and active, poll just that one.
+  const selectedIsActive = Boolean(
+    selectedId &&
+      jobs.some(
+        (j) => j.id === selectedId && (j.status === "pending" || j.status === "processing")
+      )
+  );
+  const pollMode = selectedIsActive ? `one:${selectedId}` : hasActive ? "all" : "idle";
+  const pollInterval = hasActive ? 3000 : 30000;
+
   useEffect(() => {
-    const hasActive = jobs.some(
-      (j) => j.status === "pending" || j.status === "processing"
-    );
-    // Selective polling: if a single job is selected and active, poll just that job
-    const selectedIsActive = selectedId && jobs.find(
-      (j) => j.id === selectedId && (j.status === "pending" || j.status === "processing")
-    );
-    const pollMode = selectedIsActive ? selectedId : hasActive ? "all" : "idle";
-
-    if (pollMode === pollModeRef.current && pollRef.current) return;
-    pollModeRef.current = pollMode;
-    hasActiveRef.current = hasActive;
-
-    const interval = hasActive ? 3000 : 30000;
-    const pollFn = selectedIsActive
-      ? () => fetchSingleJob(selectedId!)
+    const pollFn = pollMode.startsWith("one:")
+      ? () => fetchSingleJob(pollMode.slice(4))
       : fetchAllJobs;
 
-    if (pollRef.current) clearInterval(pollRef.current);
-    pollRef.current = setInterval(pollFn, interval);
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [jobs, selectedId, fetchAllJobs, fetchSingleJob]);
+    const id = setInterval(pollFn, pollInterval);
+    return () => clearInterval(id);
+  }, [pollMode, pollInterval, fetchAllJobs, fetchSingleJob]);
 
   // ── Upload ──
   const uploadFile = useCallback(async (file: File, formats?: string) => {
