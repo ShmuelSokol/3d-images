@@ -175,6 +175,30 @@ railway up web --path-as-root --detach
 - Only one full-screen modal at a time: the image dialog is suppressed while
   `pendingVideoFile` is set, so a mixed drop asks about the video first.
 
+## Auth secret
+- `JWT_SECRET` signs the admin cookie **and** every customer auth cookie. It used to fall
+  back to a literal committed to this public repo, and the env var was unset in
+  production — anyone reading the repo could forge an admin token or impersonate a user.
+- It is now set in Railway, and `getJwtSecret()` **throws in production** if it's missing
+  or under 16 chars. Resolved per call, not at module load: this module is imported
+  during the Next.js build, so a module-level throw would break the build instead of
+  surfacing the misconfiguration at runtime.
+- Rotating it logs everyone out. That's the point — it also kills any forged token.
+
+## Onboarding
+- The examples auto-show **only on a first visit**, remembered in `localStorage`
+  (`td_seen_intro`). Previously they showed whenever a visitor had no jobs, so returning
+  users with an expired session, or who had deleted their images, sat through it again.
+- `seenIntro` starts `null` (not `false`) so the intro stays hidden until storage is read
+  — otherwise returning visitors see it flash in and out. Server and first client render
+  therefore agree, so no hydration mismatch.
+- **Dismissal must set `seenIntro`, not just `showOnboarding`.** On a first visit the
+  intro is up via `autoIntro`, so clearing `showOnboarding` alone is a no-op and the
+  panel can't be closed. Equally, don't set "seen" on *display* — `autoIntro` would go
+  false on the next render and the intro would vanish instantly.
+- "How it works" is gated on `!introVisible`, not on having jobs, so a returning user
+  with zero jobs can still reopen it.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5

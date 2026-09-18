@@ -178,6 +178,46 @@ export default function ImageProcessor() {
   const [couponError, setCouponError] = useState("");
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // null until we've read storage — the examples used to auto-show whenever a
+  // visitor had no jobs, so anyone returning with an expired session or who had
+  // deleted their images sat through the whole intro again. null (rather than
+  // false) keeps it hidden during that first render so returning visitors never
+  // see it flash in and back out.
+  const [seenIntro, setSeenIntro] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    try {
+      setSeenIntro(window.localStorage.getItem("td_seen_intro") === "1");
+    } catch {
+      // Private window or storage blocked — treat as a first visit.
+      setSeenIntro(false);
+    }
+  }, []);
+
+  // Auto-show only on a genuine first visit; the "How it works" button always
+  // reopens it on demand.
+  const autoIntro = seenIntro === false && jobs.length === 0 && !uploading;
+  const introVisible = autoIntro || showOnboarding;
+
+  useEffect(() => {
+    if (!introVisible) return;
+    try {
+      window.localStorage.setItem("td_seen_intro", "1");
+    } catch {
+      /* storage unavailable — it just shows again next time */
+    }
+  }, [introVisible]);
+
+  // Dismissal has to clear `seenIntro` as well as `showOnboarding`: on a first
+  // visit the intro is up because of `autoIntro`, so clearing `showOnboarding`
+  // alone is a no-op and the panel stays put. (Setting it when the intro is
+  // merely *shown* would be worse — `autoIntro` would go false on the next
+  // render and the intro would vanish instantly.)
+  const dismissIntro = useCallback(() => {
+    setShowOnboarding(false);
+    setSeenIntro(true);
+  }, []);
+
   const [videoFormats, setVideoFormats] = useState({ anaglyph: true, stereogram: true, sbs: true });
   const [pendingVideoFile, setPendingVideoFile] = useState<{ file: File; duration: number } | null>(null);
   // Images wait here until the user confirms settings, rather than uploading
@@ -791,9 +831,9 @@ export default function ImageProcessor() {
             >
               Library &rarr;
             </a>
-            {jobs.length > 0 && (
+            {!introVisible && (
               <button
-                onClick={() => setShowOnboarding((v) => !v)}
+                onClick={() => setShowOnboarding(true)}
                 className="text-[11px] text-gray-500 hover:text-gray-300 transition-colors whitespace-nowrap"
               >
                 How it works
@@ -960,7 +1000,7 @@ export default function ImageProcessor() {
       </header>
 
       {/* Controls — hidden during onboarding */}
-      <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40 ${(jobs.length === 0 && !uploading) || showOnboarding ? "hidden" : ""}`}>
+      <div className={`flex flex-wrap items-center gap-x-4 gap-y-2 mb-6 sm:mb-8 bg-gray-900/60 backdrop-blur-sm rounded-2xl px-4 py-3 border border-gray-800/40 ${introVisible ? "hidden" : ""}`}>
         <div className="flex items-center gap-2 text-xs">
           <span className="font-medium text-gray-400">Intensity</span>
           <input
@@ -1052,11 +1092,11 @@ export default function ImageProcessor() {
       </div>
 
       {/* Onboarding flow — shown for first-time users or when manually triggered */}
-      {((jobs.length === 0 && !uploading) || showOnboarding) && (
+      {introVisible && (
         <Suspense fallback={null}>
           <OnboardingFlow
-            onGetStarted={() => { setShowOnboarding(false); fileInputRef.current?.click(); }}
-            onClose={showOnboarding ? () => setShowOnboarding(false) : undefined}
+            onGetStarted={() => { dismissIntro(); fileInputRef.current?.click(); }}
+            onClose={dismissIntro}
           />
         </Suspense>
       )}
