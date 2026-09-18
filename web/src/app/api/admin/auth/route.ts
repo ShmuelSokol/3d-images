@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { isAdmin, createAdminToken, ADMIN_COOKIE } from "@/lib/session";
 
 const ADMIN_EMAIL = "shmuelsokol@yahoo.com";
-const ADMIN_HASH = "$2b$10$JxK5Bblt4aDkxFI4yx0ANeT4ha239LkZclaM.6vDDTNGf6eZQBl7S";
+const ADMIN_HASH = "$2b$10$rOB8mp7UNr5fkw8sJzvgBOeAr8ZeKYgNVoWupoiIIccUnfifKRz6O";
 
 export async function GET(req: NextRequest) {
   return NextResponse.json({ admin: isAdmin(req) });
