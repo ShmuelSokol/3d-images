@@ -1,12 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSupabase } from "@/lib/supabase";
-import { getSessionId, getUserId } from "@/lib/session";
+import { getSessionId, getUserId, isAdmin, SESSION_COOKIE } from "@/lib/session";
 import sharp from "sharp";
 import { jobQueue } from "@/lib/job-queue";
 
+/**
+ * A job belongs to the caller if they own it while logged in, or — for
+ * anonymous jobs — if it was created in this browser session. Admins pass.
+ * Note we read the session cookie directly rather than via getSessionId(),
+ * which mints a fresh id when none exists and would never match.
+ */
+function ownsJob(
+  job: { userId: string | null; sessionId: string | null },
+  req: NextRequest
+): boolean {
+  if (isAdmin(req)) return true;
+  const userId = getUserId(req);
+  if (job.userId) return userId !== null && job.userId === userId;
+  const cookie = req.cookies.get(SESSION_COOKIE)?.value;
+  return !!job.sessionId && !!cookie && job.sessionId === cookie;
+}
+
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
@@ -14,6 +31,11 @@ export async function GET(
       where: { id: params.id },
     });
     if (!job) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+    // Published results are readable by anyone; everything else is private.
+    // 404 rather than 403 so IDs can't be probed for existence.
+    if (!job.isPublic && !ownsJob(job, req)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     return NextResponse.json(job);
@@ -29,6 +51,30 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
+
+    // Every mutating action requires ownership of the job.
+    const existing = await prisma.image.findUnique({
+      where: { id: params.id },
+      select: { userId: true, sessionId: true, status: true },
+    });
+    if (!existing || !ownsJob(existing, req)) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
+
+    if (body.action === "publish" || body.action === "unpublish") {
+      const publish = body.action === "publish";
+      if (publish && existing.status !== "done") {
+        return NextResponse.json(
+          { error: "Only finished results can be shared to the library." },
+          { status: 400 }
+        );
+      }
+      const job = await prisma.image.update({
+        where: { id: params.id },
+        data: { isPublic: publish, publishedAt: publish ? new Date() : null },
+      });
+      return NextResponse.json(job);
+    }
 
     if (body.action === "cancel") {
       await prisma.image.update({
@@ -130,10 +176,17 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
+    const existing = await prisma.image.findUnique({
+      where: { id: params.id },
+      select: { userId: true, sessionId: true },
+    });
+    if (!existing || !ownsJob(existing, req)) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     await prisma.image.delete({ where: { id: params.id } });
     return NextResponse.json({ ok: true });
   } catch (err) {

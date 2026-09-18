@@ -96,6 +96,7 @@ export default function RootLayout({
           <div className="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
             <p>&copy; {new Date().getFullYear()} 3D Image Generator</p>
             <nav className="flex gap-4">
+              <a href="/library" className="hover:text-gray-300 transition-colors">Library</a>
               <a href="/pricing" className="hover:text-gray-300 transition-colors">Pricing</a>
               <a href="/faq" className="hover:text-gray-300 transition-colors">FAQ</a>
               <a href="/contact" className="hover:text-gray-300 transition-colors">Contact</a>

@@ -44,6 +44,8 @@ model Image {
   fillOcclusion Boolean  @default(true)
   status        String   @default("pending")
   refunded      Boolean  @default(false)
+  isPublic      Boolean  @default(false)
+  publishedAt   DateTime?
   error       String?
   mediaType   String   @default("image")
   duration    Float?

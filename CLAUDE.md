@@ -50,6 +50,40 @@ node scripts/migrate.js # Run DB migrations
 railway up web --path-as-root --detach
 ```
 
+## Credits — invariants (learned the hard way, 2026-09-18)
+- **Charge only after the job row exists.** A credit was once decremented *before* the
+  Supabase upload, so any upload failure burned a credit and created no job at all —
+  the user saw literally nothing, not even a failed job.
+- **Failed jobs refund exactly once**, guarded by `td_image.refunded`. The guard matters:
+  `retry`/`reprocess` reset a job to `pending`, so an unguarded refund lets a user farm
+  unlimited credits off one permanently-failing image.
+- **Every upload failure must surface in the UI.** `ImageProcessor` used to handle only
+  HTTP 403 and fall through to `return true` on 500/413 — silent failure.
+
+## Uploads & size limits
+- **Supabase caps uploads at 50 MB** (project-level; the bucket's own `file_size_limit`
+  is null so it inherits that). Verified empirically: 40 MB → 200, 54 MB → 413
+  `EntityTooLarge`. Raising it requires a Supabase **Pro** plan; Free cannot exceed 50 MB.
+- Stills over 45 MB are **re-encoded** (max 4096px, JPEG q88) before storage rather than
+  rejected — processing downscales to 1024px anyway, so nothing useful is lost.
+- Videos can't be transparently shrunk → hard 413 with a clear message.
+- Hard request ceiling: 100 MB (`MAX_UPLOAD_BYTES`).
+
+## Authorization
+- `/api/jobs/[id]` GET/PATCH/DELETE are gated by `ownsJob()` — match on `userId` when
+  logged in, else on the session cookie for anonymous jobs; admins pass. Non-owners get
+  **404, not 403**, so job IDs can't be probed. Public (`isPublic`) jobs are readable by
+  anyone. Before 2026-09-18 these routes had **no ownership check at all**.
+- Read the session cookie directly in ownership checks — `getSessionId()` mints a fresh
+  UUID when none exists and would never match.
+
+## Public library
+- Opt-in per job: `isPublic` + `publishedAt` on `td_image`, toggled via PATCH
+  `publish`/`unpublish` (only on `status: "done"`).
+- `/api/library` returns shared results only, and deliberately selects **no** `userId`,
+  `sessionId`, `fileName` or `originalUrl` — sharing a result must not reveal who made it.
+- Browsable at `/library` by anyone, no credits needed.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5

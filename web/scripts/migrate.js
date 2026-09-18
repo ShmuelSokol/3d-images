@@ -78,6 +78,10 @@ async function main() {
     )`,
     // Credit refund tracking (2026-09-18) — guarantees at most one refund per job
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS refunded BOOLEAN NOT NULL DEFAULT false`,
+    // Public library (2026-09-18) — opt-in sharing of finished results
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "isPublic" BOOLEAN NOT NULL DEFAULT false`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "publishedAt" TIMESTAMP(3)`,
+    `CREATE INDEX IF NOT EXISTS td_image_public_idx ON td_image ("isPublic", "publishedAt" DESC)`,
   ];
 
   for (const sql of statements) {

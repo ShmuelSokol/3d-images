@@ -29,6 +29,7 @@ interface Job {
   duration: number | null;
   frameCount: number | null;
   framesDone: number;
+  isPublic?: boolean;
   createdAt: string;
 }
 
@@ -336,6 +337,25 @@ export default function ImageProcessor() {
       fetchCredits();
     }
   }, [pendingVideoFile, videoFormats, uploadFile, fetchCredits]);
+
+  // Opt-in sharing of a finished result to the public library.
+  const handleShare = useCallback(async (id: string, share: boolean) => {
+    try {
+      const res = await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: share ? "publish" : "unpublish" }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({} as { error?: string }));
+        alert(data.error || "Could not update sharing.");
+        return;
+      }
+      setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, isPublic: share } : j)));
+    } catch {
+      alert("Could not update sharing.");
+    }
+  }, []);
 
   const handleDelete = useCallback((id: string) => {
     setJobs((prev) => prev.filter((j) => j.id !== id));
@@ -1124,6 +1144,21 @@ export default function ImageProcessor() {
                         className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 rounded-lg text-xs font-medium transition-colors"
                       >
                         Rerun
+                      </button>
+                      <button
+                        onClick={() => handleShare(selected.id, !selected.isPublic)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          selected.isPublic
+                            ? "bg-green-700 hover:bg-green-600"
+                            : "bg-gray-700 hover:bg-gray-600"
+                        }`}
+                        title={
+                          selected.isPublic
+                            ? "Shared in the public library — click to make private"
+                            : "Share this result in the public library"
+                        }
+                      >
+                        {selected.isPublic ? "✓ Shared" : "Share to library"}
                       </button>
                       <button
                         onClick={() => handleDelete(selected.id)}

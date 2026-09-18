@@ -247,6 +247,7 @@ export async function GET(req: NextRequest) {
         duration: true,
         frameCount: true,
         framesDone: true,
+        isPublic: true,
         createdAt: true,
       },
     });
