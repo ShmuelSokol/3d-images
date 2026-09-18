@@ -30,6 +30,8 @@ interface Job {
   frameCount: number | null;
   framesDone: number;
   isPublic?: boolean;
+  moderationStatus?: string;
+  appealText?: string | null;
   createdAt: string;
 }
 
@@ -116,6 +118,7 @@ export default function ImageProcessor() {
   const [intensity, setIntensity] = useState(10);
   const [colorMode, setColorMode] = useState("dubois");
   const [fillOcclusion, setFillOcclusion] = useState(true);
+  const [hiRes, setHiRes] = useState(false);
   const [user, setUser] = useState<{ id: string; email: string } | null>(null);
   const [showAuth, setShowAuth] = useState(false);
   const [authEmail, setAuthEmail] = useState("");
@@ -227,6 +230,7 @@ export default function ImageProcessor() {
     fd.append("intensity", intensity.toString());
     fd.append("colorMode", colorMode);
     fd.append("fillOcclusion", fillOcclusion.toString());
+    fd.append("hiRes", hiRes.toString());
     if (formats) fd.append("formats", formats);
 
     const res = await fetch("/api/jobs", { method: "POST", body: fd });
@@ -247,7 +251,7 @@ export default function ImageProcessor() {
     // surface — silently returning true left users staring at nothing.
     alert(data.error || "Upload failed. Please try again.");
     return false;
-  }, [intensity, colorMode, fillOcclusion]);
+  }, [intensity, colorMode, fillOcclusion, hiRes]);
 
   const handleFiles = useCallback(async (files: FileList | File[]) => {
     const fileArr = Array.from(files);
@@ -337,6 +341,38 @@ export default function ImageProcessor() {
       fetchCredits();
     }
   }, [pendingVideoFile, videoFormats, uploadFile, fetchCredits]);
+
+  // Appeal a result that was hidden after a report.
+  const handleAppeal = useCallback(async (id: string) => {
+    const text = window.prompt(
+      "This result was hidden after someone reported it.\n\nTell the moderator why it should be restored:"
+    );
+    if (text === null) return;
+    if (!text.trim()) {
+      alert("Please explain why it should be restored.");
+      return;
+    }
+    try {
+      const res = await fetch(`/api/jobs/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "appeal", text }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({} as { error?: string }));
+        alert(data.error || "Could not submit the appeal.");
+        return;
+      }
+      setJobs((prev) =>
+        prev.map((j) =>
+          j.id === id ? { ...j, moderationStatus: "appealed", appealText: text } : j
+        )
+      );
+      alert("Appeal submitted — a moderator will take a look.");
+    } catch {
+      alert("Could not submit the appeal.");
+    }
+  }, []);
 
   // Opt-in sharing of a finished result to the public library.
   const handleShare = useCallback(async (id: string, share: boolean) => {
@@ -907,6 +943,40 @@ export default function ImageProcessor() {
           <span className="text-gray-400 group-hover:text-gray-300 transition-colors">Fill gaps</span>
         </label>
 
+        <label
+          className={`flex items-center gap-1.5 text-xs group ${
+            isPro ? "cursor-pointer" : "cursor-not-allowed"
+          }`}
+          title={
+            isPro
+              ? "Render the 3D effect at your image's full resolution (up to 4K) instead of 1024px"
+              : "HD output is a Pro feature"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={hiRes && isPro}
+            disabled={!isPro}
+            onChange={(e) => {
+              if (!isPro) return;
+              setHiRes(e.target.checked);
+            }}
+            className="accent-purple-500 rounded disabled:opacity-40"
+          />
+          <span
+            className={`transition-colors ${
+              isPro ? "text-gray-400 group-hover:text-gray-300" : "text-gray-600"
+            }`}
+          >
+            HD output
+          </span>
+          {!isPro && (
+            <span className="text-[9px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded">
+              PRO
+            </span>
+          )}
+        </label>
+
         <div className="flex-1 min-w-0" />
 
         {activeCount > 0 && (
@@ -1145,21 +1215,45 @@ export default function ImageProcessor() {
                       >
                         Rerun
                       </button>
-                      <button
-                        onClick={() => handleShare(selected.id, !selected.isPublic)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                          selected.isPublic
-                            ? "bg-green-700 hover:bg-green-600"
-                            : "bg-gray-700 hover:bg-gray-600"
-                        }`}
-                        title={
-                          selected.isPublic
-                            ? "Shared in the public library — click to make private"
-                            : "Share this result in the public library"
-                        }
-                      >
-                        {selected.isPublic ? "✓ Shared" : "Share to library"}
-                      </button>
+                      {selected.moderationStatus === "removed" ? (
+                        <span
+                          className="px-3 py-1.5 bg-red-900/40 text-red-300 rounded-lg text-xs font-medium"
+                          title="A moderator removed this from the library"
+                        >
+                          Removed by moderator
+                        </span>
+                      ) : selected.moderationStatus === "flagged" ? (
+                        <button
+                          onClick={() => handleAppeal(selected.id)}
+                          className="px-3 py-1.5 bg-amber-700 hover:bg-amber-600 rounded-lg text-xs font-medium transition-colors"
+                          title="Hidden after a report — appeal for review"
+                        >
+                          ⚑ Hidden — appeal
+                        </button>
+                      ) : selected.moderationStatus === "appealed" ? (
+                        <span
+                          className="px-3 py-1.5 bg-amber-900/40 text-amber-300 rounded-lg text-xs font-medium"
+                          title="Your appeal is waiting for a moderator"
+                        >
+                          Appeal under review
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleShare(selected.id, !selected.isPublic)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            selected.isPublic
+                              ? "bg-green-700 hover:bg-green-600"
+                              : "bg-gray-700 hover:bg-gray-600"
+                          }`}
+                          title={
+                            selected.isPublic
+                              ? "Shared in the public library — click to make private"
+                              : "Share this result in the public library"
+                          }
+                        >
+                          {selected.isPublic ? "✓ Shared" : "Share to library"}
+                        </button>
+                      )}
                       <button
                         onClick={() => handleDelete(selected.id)}
                         className="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition-colors"

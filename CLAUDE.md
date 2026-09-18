@@ -84,6 +84,45 @@ railway up web --path-as-root --detach
   `sessionId`, `fileName` or `originalUrl` — sharing a result must not reveal who made it.
 - Browsable at `/library` by anyone, no credits needed.
 
+## Moderation (public library)
+- Any viewer can report a shared result → `POST /api/library/[id]/flag`.
+- A first report on an un-reviewed image (`moderationStatus: "ok"`) **hides it from
+  everyone immediately** (→ `"flagged"`). The owner can then appeal (PATCH `action:
+  "appeal"`, allowed only from `"flagged"`), and admins resolve it in `/admin` →
+  Moderation: **clear** (→ `"cleared"`, visible again) or **remove** (→ `"removed"`,
+  `isPublic` forced false, owner can never re-share it).
+- An image a moderator **cleared is never re-hidden by a single new flag** — otherwise
+  one person could grief a reinstated image forever. New flags are still recorded, and
+  the admin queue surfaces them via flags newer than `moderatedAt`.
+- Flags dedupe on `(imageId, flaggerKey)` where flaggerKey = userId, else session id, so
+  one person can't inflate `flagCount`. `flagCount` increments only when a row is created.
+- **Visibility rule, and it must hold in EVERY read path**: `isPublic && status = "done"
+  && moderationStatus IN ("ok","cleared")`. Flagging deliberately leaves `isPublic` true
+  (so the owner can still see and appeal), which is exactly why `/api/jobs/[id]` GET has
+  to test `moderationStatus` too — gating on `isPublic` alone left flagged images
+  fetchable by id. That route also returns an explicit public-safe field subset to
+  non-owners; returning the raw row leaked `sessionId`/`userId`/`appealText`.
+- Reporter identity is never exposed — not to the public, the owner, or the admin UI.
+
+## HD output (Pro)
+- `Image.hiRes` renders the 3D effect at the image's own resolution (cap `HD_MAX_DIM`
+  = 3072) instead of the 1024px working copy. Depth estimation still runs at 1024px.
+- **The cap is memory-bound, not arbitrary.** Measured peak RSS for the render stage:
+  ~544MB at 4096px, ~330MB at 3072px, on top of the ~335MB depth model + ONNX runtime.
+  4096 lands near 1GB and risks an OOM-kill that stalls the whole queue (jobs run one at
+  a time). Raise it only together with container memory.
+- Outputs are generated and encoded one at a time in block scope so only one raw RGBA
+  buffer is live alongside the source — the side-by-side buffer is double width.
+- This works because the renderers sample depth by *relative* position
+  (`sampleDepth` in server-anaglyph), so a small depth map drives a large image. Depth is
+  low-frequency, so scaling it up costs almost nothing visually — far better than
+  upscaling a finished 1024px anaglyph, which only interpolates.
+- HD encodes the three large outputs as **JPEG** (`.jpg` keys): a 4096px PNG runs to tens
+  of MB and the double-width side-by-side can exceed the storage cap. Depth/distance maps
+  stay PNG. Non-HD output is unchanged (`.png`).
+- Gated to Pro at upload; videos never get it. Render loops are O(pixels), so 4096px is
+  ~16x the work of 1024px — and the queue runs one job at a time.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5

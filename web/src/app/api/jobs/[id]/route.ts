@@ -33,12 +33,41 @@ export async function GET(
     if (!job) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    // Published results are readable by anyone; everything else is private.
-    // 404 rather than 403 so IDs can't be probed for existence.
-    if (!job.isPublic && !ownsJob(job, req)) {
+
+    // Owners (and admins) see the whole record.
+    if (ownsJob(job, req)) {
+      return NextResponse.json(job);
+    }
+
+    // For everyone else the result must be published AND pass moderation.
+    // Flagging deliberately leaves `isPublic` alone so the owner can still see
+    // and appeal it, which means visibility MUST also test moderationStatus
+    // here — otherwise a reported image stays fetchable by id after being
+    // hidden. 404 rather than 403 so ids can't be probed for existence.
+    const visible =
+      job.isPublic &&
+      job.status === "done" &&
+      (job.moderationStatus === "ok" || job.moderationStatus === "cleared");
+    if (!visible) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
-    return NextResponse.json(job);
+
+    // Return only public-safe fields — never sessionId, userId, appealText,
+    // moderatorNote, flagCount or the original file name.
+    return NextResponse.json({
+      id: job.id,
+      anaglyphUrl: job.anaglyphUrl,
+      stereogramUrl: job.stereogramUrl,
+      sbsUrl: job.sbsUrl,
+      videoUrl: job.videoUrl,
+      width: job.width,
+      height: job.height,
+      intensity: job.intensity,
+      colorMode: job.colorMode,
+      mediaType: job.mediaType,
+      status: job.status,
+      publishedAt: job.publishedAt,
+    });
   } catch (err) {
     console.error("Fetch job error:", err);
     return NextResponse.json({ error: "Fetch failed" }, { status: 500 });
@@ -55,14 +84,42 @@ export async function PATCH(
     // Every mutating action requires ownership of the job.
     const existing = await prisma.image.findUnique({
       where: { id: params.id },
-      select: { userId: true, sessionId: true, status: true },
+      select: { userId: true, sessionId: true, status: true, moderationStatus: true },
     });
     if (!existing || !ownsJob(existing, req)) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
 
+    if (body.action === "appeal") {
+      const text = typeof body.text === "string" ? body.text.trim().slice(0, 2000) : "";
+      if (!text) {
+        return NextResponse.json({ error: "Tell us why this should be restored." }, { status: 400 });
+      }
+      const current = await prisma.image.findUnique({
+        where: { id: params.id },
+        select: { moderationStatus: true },
+      });
+      if (!current || current.moderationStatus !== "flagged") {
+        return NextResponse.json(
+          { error: "Only a flagged result can be appealed." },
+          { status: 400 }
+        );
+      }
+      const job = await prisma.image.update({
+        where: { id: params.id },
+        data: { moderationStatus: "appealed", appealText: text, appealedAt: new Date() },
+      });
+      return NextResponse.json(job);
+    }
+
     if (body.action === "publish" || body.action === "unpublish") {
       const publish = body.action === "publish";
+      if (publish && existing.moderationStatus === "removed") {
+        return NextResponse.json(
+          { error: "This result was removed by a moderator and can't be shared again." },
+          { status: 403 }
+        );
+      }
       if (publish && existing.status !== "done") {
         return NextResponse.json(
           { error: "Only finished results can be shared to the library." },

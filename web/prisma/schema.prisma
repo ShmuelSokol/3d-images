@@ -46,12 +46,23 @@ model Image {
   refunded      Boolean  @default(false)
   isPublic      Boolean  @default(false)
   publishedAt   DateTime?
+  // Moderation. status: ok | flagged | appealed | cleared | removed
+  // Anything not in (ok, cleared) is hidden from the library immediately.
+  moderationStatus String  @default("ok")
+  flagCount        Int     @default(0)
+  hiddenAt         DateTime?
+  appealText       String?
+  appealedAt       DateTime?
+  moderatedAt      DateTime?
+  moderatorNote    String?
+  flags            ImageFlag[]
   error       String?
   mediaType   String   @default("image")
   duration    Float?
   frameCount  Int?
   framesDone  Int      @default(0)
   formats      String   @default("anaglyph,stereogram,sbs")
+  hiRes        Boolean  @default(false)
   startedAt    DateTime?
   processingMs Int?
   sessionId   String?
@@ -61,6 +72,23 @@ model Image {
   updatedAt   DateTime @updatedAt
 
   @@map("td_image")
+}
+
+/// One report of a published result. `flaggerKey` is the reporter's user id
+/// when logged in, else their session id — unique per image so one person
+/// can't pile on, and so flag counts mean something.
+model ImageFlag {
+  id         String   @id @default(cuid())
+  imageId    String
+  image      Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  flaggerKey String
+  reason     String
+  detail     String?
+  createdAt  DateTime @default(now())
+
+  @@unique([imageId, flaggerKey])
+  @@index([createdAt])
+  @@map("td_image_flag")
 }
 
 model Coupon {

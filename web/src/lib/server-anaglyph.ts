@@ -329,6 +329,18 @@ export async function rawToPng(image: RawImage): Promise<Buffer> {
 }
 
 /**
+ * Encode raw RGBA to JPEG. Used for high-resolution output, where PNG would
+ * be tens of megabytes and can exceed the storage object-size limit.
+ */
+export async function rawToJpeg(image: RawImage, quality = 92): Promise<Buffer> {
+  return sharp(image.data, {
+    raw: { width: image.width, height: image.height, channels: 4 },
+  })
+    .jpeg({ quality, mozjpeg: true })
+    .toBuffer();
+}
+
+/**
  * Decode an image buffer (JPEG/PNG/etc) to raw RGBA pixels.
  */
 export async function decodeToRaw(

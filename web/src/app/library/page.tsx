@@ -20,6 +20,14 @@ interface LibraryItem {
 type Filter = "all" | "image" | "video";
 type View = "anaglyph" | "stereogram" | "sbs";
 
+const REPORT_REASONS: { value: string; label: string }[] = [
+  { value: "sexual", label: "Sexual or explicit content" },
+  { value: "violent", label: "Violent or graphic content" },
+  { value: "hateful", label: "Hateful or harassing" },
+  { value: "copyright", label: "Copyright or privacy violation" },
+  { value: "other", label: "Something else" },
+];
+
 export default function LibraryPage() {
   const [items, setItems] = useState<LibraryItem[]>([]);
   const [page, setPage] = useState(0);
@@ -29,6 +37,40 @@ export default function LibraryPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [lightbox, setLightbox] = useState<LibraryItem | null>(null);
   const [view, setView] = useState<View>("anaglyph");
+  const [reporting, setReporting] = useState(false);
+  const [reportReason, setReportReason] = useState("sexual");
+  const [reportDetail, setReportDetail] = useState("");
+  const [reportState, setReportState] = useState<"idle" | "sending" | "sent">("idle");
+
+  const submitReport = useCallback(async () => {
+    if (!lightbox) return;
+    setReportState("sending");
+    try {
+      const res = await fetch(`/api/library/${lightbox.id}/flag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reportReason, detail: reportDetail }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({} as { error?: string }));
+        alert(data.error || "Could not submit the report.");
+        setReportState("idle");
+        return;
+      }
+      setReportState("sent");
+      // Reported content is hidden immediately — drop it from this view too.
+      setItems((prev) => prev.filter((i) => i.id !== lightbox.id));
+      setTimeout(() => {
+        setLightbox(null);
+        setReporting(false);
+        setReportState("idle");
+        setReportDetail("");
+      }, 1800);
+    } catch {
+      alert("Could not submit the report.");
+      setReportState("idle");
+    }
+  }, [lightbox, reportReason, reportDetail]);
 
   const load = useCallback(async (nextPage: number, f: Filter, append: boolean) => {
     setLoading(true);
@@ -135,6 +177,9 @@ export default function LibraryPage() {
                     key={item.id}
                     onClick={() => {
                       setView("anaglyph");
+                      setReporting(false);
+                      setReportState("idle");
+                      setReportDetail("");
                       setLightbox(item);
                     }}
                     className="group relative aspect-square bg-gray-900 rounded-xl overflow-hidden border border-gray-800 hover:border-cyan-600 transition-colors"
@@ -240,12 +285,71 @@ export default function LibraryPage() {
                 Open full size
               </a>
               <button
+                onClick={() => setReporting((r) => !r)}
+                className="px-4 py-2 bg-gray-800 hover:bg-red-900/60 text-gray-300 hover:text-red-200 rounded-lg text-sm transition-colors"
+              >
+                ⚑ Report
+              </button>
+              <button
                 onClick={() => setLightbox(null)}
                 className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
               >
                 Close
               </button>
             </div>
+
+            {reporting && (
+              <div className="mt-4 max-w-md mx-auto bg-gray-900 border border-gray-700 rounded-xl p-4 space-y-3">
+                {reportState === "sent" ? (
+                  <p className="text-sm text-green-400 text-center py-2">
+                    Thanks — this has been hidden straight away and sent for review.
+                  </p>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium text-gray-200">
+                      Report this result
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      It will be hidden from everyone immediately while a moderator reviews it.
+                    </p>
+                    <select
+                      value={reportReason}
+                      onChange={(e) => setReportReason(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200"
+                    >
+                      {REPORT_REASONS.map((r) => (
+                        <option key={r.value} value={r.value}>
+                          {r.label}
+                        </option>
+                      ))}
+                    </select>
+                    <textarea
+                      value={reportDetail}
+                      onChange={(e) => setReportDetail(e.target.value)}
+                      placeholder="Anything else we should know? (optional)"
+                      rows={3}
+                      maxLength={1000}
+                      className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-200 placeholder-gray-500 resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={submitReport}
+                        disabled={reportState === "sending"}
+                        className="flex-1 py-2 bg-red-700 hover:bg-red-600 rounded-lg text-xs font-medium transition-colors disabled:opacity-50"
+                      >
+                        {reportState === "sending" ? "Submitting…" : "Submit report"}
+                      </button>
+                      <button
+                        onClick={() => setReporting(false)}
+                        className="flex-1 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-medium transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}

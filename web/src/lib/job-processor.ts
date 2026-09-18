@@ -9,6 +9,7 @@ import {
   generateSideBySide,
   decodeToRaw,
   rawToPng,
+  rawToJpeg,
   depthToPng,
 } from "./server-anaglyph";
 import { processVideoJob } from "./server-video";
@@ -20,13 +21,27 @@ const MODELS: Record<string, string> = {
   hd: "onnx-community/depth-anything-v2-large",
 };
 
+/**
+ * Ceiling for HD rendering. The render loops are O(pixels) and the side-by-side
+ * output is twice this wide, so raising this costs time and memory sharply.
+ *
+ * Measured peak RSS for the render stage alone (source + one output at a time,
+ * mozjpeg encode): ~544MB at 4096px, ~330MB at 3072px. On top of that sits the
+ * depth model (~335MB) plus the ONNX runtime and Node baseline, so 4096 lands
+ * near 1GB and risks an OOM-kill that would take down the whole queue — jobs
+ * run one at a time. 3072 keeps the total comfortably clear. Raise this only
+ * alongside more container memory.
+ */
+const HD_MAX_DIM = 3072;
+
 async function processImageJob(
   jobId: string,
   originalUrl: string,
   intensity: number,
   quality: string,
   colorMode: string,
-  fillOcclusion: boolean
+  fillOcclusion: boolean,
+  hiRes = false
 ): Promise<void> {
   const model = MODELS[quality] || MODELS.hd;
 
@@ -53,35 +68,78 @@ async function processImageJob(
   // Convert to JPEG buffer for depth estimation
   const jpegBuf = Buffer.from(await sharp(resized).jpeg({ quality: 85 }).toBuffer());
 
-  // Depth estimation
+  // Depth estimation always runs on the <=1024px copy — that's the model's
+  // working resolution, and more pixels wouldn't make it better.
   const depth = await estimateDepth(jpegBuf, model);
 
+  // HD output renders the 3D effect at the image's own resolution instead of
+  // the 1024px working copy. The renderers sample depth by relative position
+  // (see sampleDepth in server-anaglyph), so a small depth map drives a large
+  // image correctly: depth is low-frequency, so scaling it up costs almost
+  // nothing visually while the output keeps the original's real detail.
+  let renderSource: Buffer = resized;
+  if (hiRes) {
+    const ow = meta.width || 0;
+    const oh = meta.height || 0;
+    const longest = Math.max(ow, oh);
+    if (longest > HD_MAX_DIM) {
+      const s = HD_MAX_DIM / longest;
+      renderSource = Buffer.from(
+        await sharp(rotated).resize(Math.round(ow * s), Math.round(oh * s)).toBuffer()
+      );
+    } else {
+      renderSource = rotated;
+    }
+  }
+
   // Decode to raw RGBA for anaglyph
-  const raw = await decodeToRaw(resized);
+  const raw = await decodeToRaw(renderSource);
+  const outW = raw.width;
+  const outH = raw.height;
 
-  // Generate anaglyph
-  const anaglyph = generateAnaglyphServer(
-    raw,
-    depth.data,
-    depth.width,
-    depth.height,
-    intensity,
-    (colorMode === "classic" ? "classic" : "dubois"),
-    fillOcclusion
-  );
+  // At HD the three large outputs go out as JPEG — a 4096px PNG runs to tens of
+  // megabytes, and the side-by-side one (double width) can exceed the storage
+  // object-size limit outright.
+  const ext = hiRes ? "jpg" : "png";
+  const contentType = hiRes ? "image/jpeg" : "image/png";
+  const encodeMain = (img: Parameters<typeof rawToPng>[0]) =>
+    hiRes ? rawToJpeg(img) : rawToPng(img);
 
-  // Generate additional formats
-  const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, w, h);
-  const sbs = generateSideBySide(raw, depth.data, depth.width, depth.height, intensity);
+  // Generate and encode one output at a time, letting each raw RGBA buffer go
+  // out of scope before the next is allocated. This matters at HD: these
+  // buffers are 4 bytes per pixel and the side-by-side one is double width, so
+  // holding all three at 4096px would be ~250MB of pixels alive at once on top
+  // of the source. Block scoping keeps the peak at roughly one output plus the
+  // source, not the sum of all three. (Node Buffers are off-heap, so this is
+  // about container RSS, not --max-old-space-size.)
+  let anaglyphPng: Buffer;
+  {
+    const anaglyph = generateAnaglyphServer(
+      raw,
+      depth.data,
+      depth.width,
+      depth.height,
+      intensity,
+      (colorMode === "classic" ? "classic" : "dubois"),
+      fillOcclusion
+    );
+    anaglyphPng = await encodeMain(anaglyph);
+  }
 
-  // Encode results
-  const [anaglyphPng, depthPng, distanceMapPng, stereogramPng, sbsPng] = await Promise.all([
-    rawToPng(anaglyph),
-    depthToPng(depth.data, depth.width, depth.height),
-    generateColorMap(depth.data, depth.width, depth.height),
-    rawToPng(stereogram),
-    rawToPng(sbs),
-  ]);
+  let stereogramPng: Buffer;
+  {
+    const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, outW, outH);
+    stereogramPng = await encodeMain(stereogram);
+  }
+
+  let sbsPng: Buffer;
+  {
+    const sbs = generateSideBySide(raw, depth.data, depth.width, depth.height, intensity);
+    sbsPng = await encodeMain(sbs);
+  }
+
+  const depthPng = await depthToPng(depth.data, depth.width, depth.height);
+  const distanceMapPng = await generateColorMap(depth.data, depth.width, depth.height);
 
   // Upload to Supabase
   const supabase = getSupabase();
@@ -89,8 +147,8 @@ async function processImageJob(
   const [anaUpload, depthUpload, distUpload, stereoUpload, sbsUpload] = await Promise.all([
     supabase.storage
       .from("3d-images")
-      .upload(`anaglyph/${jobId}-anaglyph.png`, anaglyphPng, {
-        contentType: "image/png",
+      .upload(`anaglyph/${jobId}-anaglyph.${ext}`, anaglyphPng, {
+        contentType,
         upsert: true,
       }),
     supabase.storage
@@ -107,14 +165,14 @@ async function processImageJob(
       }),
     supabase.storage
       .from("3d-images")
-      .upload(`stereogram/${jobId}-stereogram.png`, stereogramPng, {
-        contentType: "image/png",
+      .upload(`stereogram/${jobId}-stereogram.${ext}`, stereogramPng, {
+        contentType,
         upsert: true,
       }),
     supabase.storage
       .from("3d-images")
-      .upload(`sbs/${jobId}-sbs.png`, sbsPng, {
-        contentType: "image/png",
+      .upload(`sbs/${jobId}-sbs.${ext}`, sbsPng, {
+        contentType,
         upsert: true,
       }),
   ]);
@@ -127,7 +185,7 @@ async function processImageJob(
 
   const anaglyphUrl = supabase.storage
     .from("3d-images")
-    .getPublicUrl(`anaglyph/${jobId}-anaglyph.png`).data.publicUrl;
+    .getPublicUrl(`anaglyph/${jobId}-anaglyph.${ext}`).data.publicUrl;
 
   const depthMapUrl = supabase.storage
     .from("3d-images")
@@ -139,11 +197,11 @@ async function processImageJob(
 
   const stereogramUrl = supabase.storage
     .from("3d-images")
-    .getPublicUrl(`stereogram/${jobId}-stereogram.png`).data.publicUrl;
+    .getPublicUrl(`stereogram/${jobId}-stereogram.${ext}`).data.publicUrl;
 
   const sbsUrl = supabase.storage
     .from("3d-images")
-    .getPublicUrl(`sbs/${jobId}-sbs.png`).data.publicUrl;
+    .getPublicUrl(`sbs/${jobId}-sbs.${ext}`).data.publicUrl;
 
   // Update DB
   await prisma.image.update({
@@ -154,8 +212,8 @@ async function processImageJob(
       distanceMapUrl,
       stereogramUrl,
       sbsUrl,
-      width: w,
-      height: h,
+      width: outW,
+      height: outH,
       status: "done",
     },
   });
@@ -186,7 +244,29 @@ export async function processJob(jobId: string): Promise<void> {
       });
       console.log(`[job] Video done: ${jobId}`);
     } else {
-      await processImageJob(jobId, job.originalUrl, job.intensity, "hd", job.colorMode, job.fillOcclusion);
+      // `hiRes` persists on the row, so re-check the plan at processing time —
+      // otherwise someone who was Pro at upload keeps getting HD renders from
+      // retry/reprocess long after their subscription lapsed.
+      let renderHiRes = job.hiRes;
+      if (renderHiRes && job.userId) {
+        const owner = await prisma.user.findUnique({
+          where: { id: job.userId },
+          select: { plan: true },
+        });
+        renderHiRes = owner?.plan === "pro";
+      } else if (renderHiRes) {
+        renderHiRes = false;
+      }
+
+      await processImageJob(
+        jobId,
+        job.originalUrl,
+        job.intensity,
+        "hd",
+        job.colorMode,
+        job.fillOcclusion,
+        renderHiRes
+      );
     }
   } catch (err) {
     const msg = (err as Error).message || "Processing failed";

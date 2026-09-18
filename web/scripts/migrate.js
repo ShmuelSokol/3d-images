@@ -82,6 +82,27 @@ async function main() {
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "isPublic" BOOLEAN NOT NULL DEFAULT false`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "publishedAt" TIMESTAMP(3)`,
     `CREATE INDEX IF NOT EXISTS td_image_public_idx ON td_image ("isPublic", "publishedAt" DESC)`,
+    // HD output (2026-09-18) — render at native resolution, Pro only
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "hiRes" BOOLEAN NOT NULL DEFAULT false`,
+    // Moderation (2026-09-18) — flag hides instantly, owner may appeal, admin reviews
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "moderationStatus" TEXT NOT NULL DEFAULT 'ok'`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "flagCount" INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "hiddenAt" TIMESTAMP(3)`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "appealText" TEXT`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "appealedAt" TIMESTAMP(3)`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "moderatedAt" TIMESTAMP(3)`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "moderatorNote" TEXT`,
+    `CREATE TABLE IF NOT EXISTS td_image_flag (
+      id TEXT PRIMARY KEY,
+      "imageId" TEXT NOT NULL REFERENCES td_image(id) ON DELETE CASCADE,
+      "flaggerKey" TEXT NOT NULL,
+      reason TEXT NOT NULL,
+      detail TEXT,
+      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE("imageId", "flaggerKey")
+    )`,
+    `CREATE INDEX IF NOT EXISTS td_image_flag_created_idx ON td_image_flag ("createdAt")`,
+    `CREATE INDEX IF NOT EXISTS td_image_moderation_idx ON td_image ("moderationStatus", "hiddenAt" DESC)`,
   ];
 
   for (const sql of statements) {

@@ -16,6 +16,9 @@ export async function GET(req: NextRequest) {
     const where = {
       isPublic: true,
       status: "done",
+      // Flagged / appealed / removed results are invisible to everyone.
+      // Only never-reported ("ok") and moderator-cleared results show.
+      moderationStatus: { in: ["ok", "cleared"] },
       ...(mediaType === "video" || mediaType === "image" ? { mediaType } : {}),
     };
 

@@ -6,6 +6,25 @@ import {
   PieChart, Pie, Cell, Legend,
 } from "recharts";
 
+interface ModerationItem {
+  id: string;
+  anaglyphUrl: string | null;
+  stereogramUrl?: string | null;
+  videoUrl?: string | null;
+  fileName: string;
+  mediaType: string;
+  moderationStatus?: string;
+  flagCount: number;
+  hiddenAt?: string | null;
+  appealText?: string | null;
+  appealedAt?: string | null;
+  moderatedAt?: string | null;
+  moderatorNote?: string | null;
+  isPublic: boolean;
+  user: { email: string } | null;
+  flags: { reason: string; detail: string | null; createdAt: string }[];
+}
+
 interface Stats {
   totalJobs: number;
   totalUsers: number;
@@ -58,7 +77,7 @@ export default function AdminPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
-  const [tab, setTab] = useState<"generator" | "overview" | "users" | "payments" | "queue" | "activity" | "coupons" | "tickets">("generator");
+  const [tab, setTab] = useState<"generator" | "overview" | "users" | "payments" | "queue" | "activity" | "coupons" | "tickets" | "moderation">("generator");
   const [coupons, setCoupons] = useState<{ id: string; code: string; credits: number; maxRedemptions: number; timesRedeemed: number; expiresAt: string | null; createdAt: string; redemptions: { id: string; createdAt: string; user: { email: string } }[] }[]>([]);
   const [tickets, setTickets] = useState<{ id: string; email: string; subject: string; message: string; status: string; adminNote: string | null; createdAt: string }[]>([]);
   const [newCouponCode, setNewCouponCode] = useState("");
@@ -91,6 +110,41 @@ export default function AdminPage() {
     }
   }, []);
 
+  const [moderation, setModeration] = useState<{
+    pending: ModerationItem[];
+    reflagged: ModerationItem[];
+    removedCount: number;
+    publishedCount: number;
+  } | null>(null);
+
+  const loadModeration = useCallback(async () => {
+    try {
+      const res = await fetch("/api/admin/moderation");
+      if (res.ok) setModeration(await res.json());
+    } catch { /* ignore */ }
+  }, []);
+
+  const moderate = useCallback(async (imageId: string, action: string) => {
+    const label =
+      action === "remove" ? "Remove permanently" : action === "clear" ? "Restore" : "Unshare";
+    if (!confirm(`${label} this result?`)) return;
+    const note = window.prompt("Note for the record (optional):") ?? "";
+    try {
+      const res = await fetch("/api/admin/moderation", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageId, action, note }),
+      });
+      if (!res.ok) {
+        alert("Action failed");
+        return;
+      }
+      loadModeration();
+    } catch {
+      alert("Action failed");
+    }
+  }, [loadModeration]);
+
   const loadTickets = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/tickets");
@@ -122,7 +176,8 @@ export default function AdminPage() {
   useEffect(() => {
     if (tab === "coupons" && authed) loadCoupons();
     if (tab === "tickets" && authed) loadTickets();
-  }, [tab, authed, loadCoupons, loadTickets]);
+    if (tab === "moderation" && authed) loadModeration();
+  }, [tab, authed, loadCoupons, loadTickets, loadModeration]);
 
   useEffect(() => {
     if (authed && tab !== "generator") loadStats();
@@ -216,7 +271,7 @@ export default function AdminPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-gray-900 rounded-lg p-1 w-fit">
-          {(["generator", "overview", "users", "payments", "queue", "activity", "coupons", "tickets"] as const).map((t) => (
+          {(["generator", "overview", "users", "payments", "queue", "activity", "coupons", "tickets", "moderation"] as const).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -237,14 +292,14 @@ export default function AdminPage() {
         )}
 
         {/* Admin Tabs (need stats) */}
-        {tab !== "generator" && tab !== "coupons" && tab !== "tickets" && !stats && (
+        {tab !== "generator" && tab !== "coupons" && tab !== "tickets" && tab !== "moderation" && !stats && (
           <div>
             <p className="text-gray-500">Loading stats...</p>
             {statsError && <p className="text-red-400 text-sm mt-2">{statsError}</p>}
           </div>
         )}
 
-        {tab !== "generator" && (stats || tab === "coupons" || tab === "tickets") && (
+        {tab !== "generator" && (stats || tab === "coupons" || tab === "tickets" || tab === "moderation") && (
           <>
             {/* Overview Tab */}
             {tab === "overview" && stats && (
@@ -928,9 +983,159 @@ export default function AdminPage() {
                 )}
               </div>
             )}
+
+            {/* Moderation Tab */}
+            {tab === "moderation" && (
+              <div className="space-y-6">
+                {!moderation ? (
+                  <p className="text-gray-500 text-sm">Loading…</p>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <StatCard label="Awaiting review" value={moderation.pending.length} />
+                      <StatCard label="Re-reported" value={moderation.reflagged.length} />
+                      <StatCard label="Live in library" value={moderation.publishedCount} />
+                      <StatCard label="Removed" value={moderation.removedCount} />
+                    </div>
+
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-200 mb-3">
+                        Awaiting review
+                        <span className="text-gray-500 font-normal"> — hidden from everyone right now</span>
+                      </h3>
+                      {moderation.pending.length === 0 ? (
+                        <p className="text-gray-500 text-sm border border-gray-800 rounded-xl p-6 text-center">
+                          Nothing reported. 🎉
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {moderation.pending.map((m) => (
+                            <ModerationCard key={m.id} item={m} onAction={moderate} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {moderation.reflagged.length > 0 && (
+                      <div>
+                        <h3 className="text-sm font-semibold text-gray-200 mb-3">
+                          Reported again since you cleared them
+                          <span className="text-gray-500 font-normal"> — still visible</span>
+                        </h3>
+                        <div className="space-y-3">
+                          {moderation.reflagged.map((m) => (
+                            <ModerationCard key={m.id} item={m} onAction={moderate} />
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </>
         )}
 
+      </div>
+    </div>
+  );
+}
+
+function ModerationCard({
+  item,
+  onAction,
+}: {
+  item: ModerationItem;
+  onAction: (id: string, action: string) => void;
+}) {
+  const preview = item.anaglyphUrl || item.stereogramUrl || null;
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex gap-4">
+      <div className="w-28 h-28 shrink-0 bg-black rounded-lg overflow-hidden flex items-center justify-center">
+        {item.mediaType === "video" && item.videoUrl ? (
+          <video src={item.videoUrl} muted className="w-full h-full object-cover" />
+        ) : preview ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={preview} alt="Reported result" className="w-full h-full object-cover" />
+        ) : (
+          <span className="text-gray-600 text-xs">No preview</span>
+        )}
+      </div>
+
+      <div className="flex-1 min-w-0 space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+              item.moderationStatus === "appealed"
+                ? "bg-amber-900/50 text-amber-300"
+                : item.moderationStatus === "cleared"
+                  ? "bg-green-900/50 text-green-300"
+                  : "bg-red-900/50 text-red-300"
+            }`}
+          >
+            {item.moderationStatus === "appealed"
+              ? "Appealed"
+              : item.moderationStatus === "cleared"
+                ? "Cleared"
+                : "Hidden"}
+          </span>
+          <span className="text-xs text-gray-400">
+            {item.flagCount} report{item.flagCount === 1 ? "" : "s"}
+          </span>
+          <span className="text-xs text-gray-600 truncate">
+            {item.user?.email || "anonymous"}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5">
+          {item.flags.map((f, i) => (
+            <span
+              key={i}
+              className="px-2 py-0.5 bg-gray-800 rounded text-[10px] text-gray-300"
+              title={f.detail || undefined}
+            >
+              {f.reason}
+              {f.detail ? " ·" : ""}
+              {f.detail ? <span className="text-gray-500"> {f.detail.slice(0, 60)}</span> : null}
+            </span>
+          ))}
+        </div>
+
+        {item.appealText && (
+          <div className="bg-gray-800 rounded-lg p-2.5 text-xs text-gray-300">
+            <span className="text-amber-400 font-medium">Appeal:</span>{" "}
+            <span className="whitespace-pre-wrap">{item.appealText}</span>
+          </div>
+        )}
+
+        {item.moderatorNote && (
+          <p className="text-[11px] text-gray-500">
+            <span className="text-cyan-400">Note:</span> {item.moderatorNote}
+          </p>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={() => onAction(item.id, "clear")}
+            className="px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-lg text-xs font-medium transition-colors"
+          >
+            Restore
+          </button>
+          <button
+            onClick={() => onAction(item.id, "remove")}
+            className="px-3 py-1.5 bg-red-700 hover:bg-red-600 rounded-lg text-xs font-medium transition-colors"
+          >
+            Remove permanently
+          </button>
+          <a
+            href={preview || item.videoUrl || "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-medium transition-colors"
+          >
+            Open full size
+          </a>
+        </div>
       </div>
     </div>
   );

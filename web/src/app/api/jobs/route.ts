@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
     const colorMode = (formData.get("colorMode") as string) || "dubois";
     const fillOcclusion = (formData.get("fillOcclusion") as string) !== "false";
     const formats = (formData.get("formats") as string) || "anaglyph,stereogram,sbs";
+    const wantsHiRes = (formData.get("hiRes") as string) === "true";
     const isVideo = file.type.startsWith("video/");
     const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -65,6 +66,14 @@ export async function POST(req: NextRequest) {
           { status: 403 }
         );
       }
+      // HD output is a Pro feature — rendering at native resolution is
+      // markedly more expensive, and jobs run one at a time.
+      if (wantsHiRes && user.plan !== "pro") {
+        return NextResponse.json(
+          { error: "HD output requires Pro plan. Upgrade for $9.99/month.", code: "PRO_REQUIRED" },
+          { status: 403 }
+        );
+      }
       // Video requires Pro plan
       if (isVideo && user.plan !== "pro") {
         return NextResponse.json(
@@ -75,6 +84,13 @@ export async function POST(req: NextRequest) {
       // The credit is charged only once the job row exists (see below), so a
       // failed upload can never burn a credit without producing a job.
     } else {
+      // Anonymous: no HD output either
+      if (wantsHiRes) {
+        return NextResponse.json(
+          { error: "HD output requires Pro plan. Sign up and upgrade!", code: "PRO_REQUIRED" },
+          { status: 403 }
+        );
+      }
       // Anonymous: no video
       if (isVideo) {
         return NextResponse.json(
@@ -184,6 +200,8 @@ export async function POST(req: NextRequest) {
         fillOcclusion,
         formats: isVideo ? formats : "anaglyph,stereogram,sbs",
         status: "pending",
+        // Only ever true for a Pro user — the checks above return before here.
+        hiRes: wantsHiRes && !isVideo,
         mediaType: isVideo ? "video" : "image",
         sessionId,
         userId,
@@ -248,6 +266,8 @@ export async function GET(req: NextRequest) {
         frameCount: true,
         framesDone: true,
         isPublic: true,
+        moderationStatus: true,
+        appealText: true,
         createdAt: true,
       },
     });
