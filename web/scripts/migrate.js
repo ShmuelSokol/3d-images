@@ -82,7 +82,10 @@ async function main() {
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "isPublic" BOOLEAN NOT NULL DEFAULT false`,
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "publishedAt" TIMESTAMP(3)`,
     `CREATE INDEX IF NOT EXISTS td_image_public_idx ON td_image ("isPublic", "publishedAt" DESC)`,
-    // HD output (2026-09-18) — render at native resolution, Pro only
+    // HD exports grantable to non-Pro users (2026-09-18)
+    `ALTER TABLE td_user ADD COLUMN IF NOT EXISTS "hdCredits" INT NOT NULL DEFAULT 0`,
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "hdCreditUsed" BOOLEAN NOT NULL DEFAULT false`,
+    // HD output (2026-09-18) — render at native resolution, Pro or an HD credit
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "hiRes" BOOLEAN NOT NULL DEFAULT false`,
     // Moderation (2026-09-18) — flag hides instantly, owner may appeal, admin reviews
     `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS "moderationStatus" TEXT NOT NULL DEFAULT 'ok'`,

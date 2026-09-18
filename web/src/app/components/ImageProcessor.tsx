@@ -136,8 +136,11 @@ export default function ImageProcessor() {
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
-  const [creditInfo, setCreditInfo] = useState<{ type: string; credits: number | null; plan?: string; used?: number; limit?: number | null; remaining?: number } | null>(null);
+  const [creditInfo, setCreditInfo] = useState<{ type: string; credits: number | null; plan?: string; hdCredits?: number; used?: number; limit?: number | null; remaining?: number } | null>(null);
+  const isAdminUser = creditInfo?.type === "admin";
   const isPro = creditInfo?.plan === "pro";
+  const hdCredits = creditInfo?.hdCredits ?? 0;
+  const canHd = isPro || hdCredits > 0;
   const [couponCode, setCouponCode] = useState("");
   const [couponMsg, setCouponMsg] = useState("");
   const [couponError, setCouponError] = useState("");
@@ -746,7 +749,13 @@ export default function ImageProcessor() {
       {/* Header */}
       <header className="mb-8 sm:mb-10">
         <div className="flex items-center justify-between mb-3">
-          <div className="w-24">
+          <div className="w-24 flex flex-col items-start gap-1">
+            <a
+              href="/library"
+              className="text-[11px] text-cyan-400 hover:text-cyan-300 transition-colors whitespace-nowrap font-medium"
+            >
+              Library &rarr;
+            </a>
             {jobs.length > 0 && (
               <button
                 onClick={() => setShowOnboarding((v) => !v)}
@@ -779,6 +788,19 @@ export default function ImageProcessor() {
                 >
                   Log out
                 </button>
+              </div>
+            ) : isAdminUser ? (
+              <div className="flex items-center gap-2 text-xs justify-end">
+                <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded font-medium">
+                  ADMIN
+                </span>
+                <span className="text-cyan-400 font-medium">unlimited</span>
+                <a
+                  href="/admin"
+                  className="text-gray-500 hover:text-gray-300 transition-colors"
+                >
+                  Dashboard
+                </a>
               </div>
             ) : (
               <div className="flex items-center gap-2 text-xs justify-end">
@@ -945,32 +967,37 @@ export default function ImageProcessor() {
 
         <label
           className={`flex items-center gap-1.5 text-xs group ${
-            isPro ? "cursor-pointer" : "cursor-not-allowed"
+            canHd ? "cursor-pointer" : "cursor-not-allowed"
           }`}
           title={
-            isPro
-              ? "Render the 3D effect at your image's full resolution (up to 4K) instead of 1024px"
+            canHd
+              ? "Render the 3D effect at your image's own resolution (up to 3072px) instead of 1024px"
               : "HD output is a Pro feature"
           }
         >
           <input
             type="checkbox"
-            checked={hiRes && isPro}
-            disabled={!isPro}
+            checked={hiRes && canHd}
+            disabled={!canHd}
             onChange={(e) => {
-              if (!isPro) return;
+              if (!canHd) return;
               setHiRes(e.target.checked);
             }}
             className="accent-purple-500 rounded disabled:opacity-40"
           />
           <span
             className={`transition-colors ${
-              isPro ? "text-gray-400 group-hover:text-gray-300" : "text-gray-600"
+              canHd ? "text-gray-400 group-hover:text-gray-300" : "text-gray-600"
             }`}
           >
             HD output
           </span>
-          {!isPro && (
+          {!isPro && hdCredits > 0 && (
+            <span className="text-[9px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded">
+              {hdCredits} left
+            </span>
+          )}
+          {!canHd && (
             <span className="text-[9px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded">
               PRO
             </span>

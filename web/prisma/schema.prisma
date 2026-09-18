@@ -16,6 +16,7 @@ model User {
   email                String   @unique
   password             String
   imageCredits         Int      @default(50)
+  hdCredits            Int      @default(0)
   plan                 String   @default("free")
   stripeCustomerId     String?
   stripeSubscriptionId String?
@@ -63,6 +64,7 @@ model Image {
   framesDone  Int      @default(0)
   formats      String   @default("anaglyph,stereogram,sbs")
   hiRes        Boolean  @default(false)
+  hdCreditUsed Boolean  @default(false)
   startedAt    DateTime?
   processingMs Int?
   sessionId   String?

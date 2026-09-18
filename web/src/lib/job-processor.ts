@@ -128,7 +128,12 @@ async function processImageJob(
 
   let stereogramPng: Buffer;
   {
-    const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, outW, outH);
+    // Deliberately NOT rendered at HD. A random-dot stereogram carries no
+    // image detail to preserve, and its dot separation is an absolute pixel
+    // distance: enlarging the canvas just means that when the viewer fits the
+    // image to their screen, the separation scales below what they can fuse.
+    // The 1024px working size keeps it viewable at 100% zoom.
+    const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, w, h);
     stereogramPng = await encodeMain(stereogram);
   }
 
@@ -244,18 +249,24 @@ export async function processJob(jobId: string): Promise<void> {
       });
       console.log(`[job] Video done: ${jobId}`);
     } else {
-      // `hiRes` persists on the row, so re-check the plan at processing time —
-      // otherwise someone who was Pro at upload keeps getting HD renders from
-      // retry/reprocess long after their subscription lapsed.
+      // `hiRes` persists on the row, so re-check entitlement at processing
+      // time — otherwise someone who was Pro at upload keeps getting HD
+      // renders from retry/reprocess long after their subscription lapsed.
+      // A job that spent a granted HD export stays entitled either way: it
+      // was already paid for.
+      // Only a customer account needs re-checking: a subscription can lapse
+      // between upload and render. A job with no userId that still carries
+      // hiRes can only have come from an admin — the upload route rejects HD
+      // for anonymous callers outright — so it stays entitled. (Processing has
+      // no request context, so isAdmin() isn't available here; this relies on
+      // that invariant in src/app/api/jobs/route.ts.)
       let renderHiRes = job.hiRes;
-      if (renderHiRes && job.userId) {
+      if (renderHiRes && !job.hdCreditUsed && job.userId) {
         const owner = await prisma.user.findUnique({
           where: { id: job.userId },
           select: { plan: true },
         });
         renderHiRes = owner?.plan === "pro";
-      } else if (renderHiRes) {
-        renderHiRes = false;
       }
 
       await processImageJob(
@@ -293,9 +304,16 @@ export async function processJob(jobId: string): Promise<void> {
         if (claimed.count === 1) {
           await prisma.user.update({
             where: { id: job.userId },
-            data: { imageCredits: { increment: 1 } },
+            data: {
+              imageCredits: { increment: 1 },
+              // A granted HD export is refunded too — same rule: a failed job
+              // must never cost the user anything.
+              ...(job.hdCreditUsed ? { hdCredits: { increment: 1 } } : {}),
+            },
           });
-          console.log(`[job] Refunded 1 credit to ${job.userId}`);
+          console.log(
+            `[job] Refunded 1 credit${job.hdCreditUsed ? " + 1 HD export" : ""} to ${job.userId}`
+          );
         }
       }
     }

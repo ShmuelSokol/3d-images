@@ -363,7 +363,7 @@ export function generateAutostereogram(
   outputWidth: number,
   outputHeight: number
 ): RawImage {
-  // Normalize depth
+  // Normalize depth (0 = far, 1 = close)
   let minD = Infinity, maxD = -Infinity;
   for (let i = 0; i < depthData.length; i++) {
     if (depthData[i] < minD) minD = depthData[i];
@@ -372,68 +372,91 @@ export function generateAutostereogram(
   const rangeD = maxD - minD || 1;
   const normalized = new Float32Array(depthData.length);
   for (let i = 0; i < depthData.length; i++) {
-    normalized[i] = (depthData[i] - minD) / rangeD; // 0=far, 1=close
+    normalized[i] = (depthData[i] - minD) / rangeD;
   }
+  // Light blur: hard depth steps produce constraint conflicts that read as noise.
+  const blurRadius = Math.max(2, Math.round(Math.min(depthWidth, depthHeight) / 200));
+  const smoothed = blurDepth(normalized, depthWidth, depthHeight, blurRadius);
 
-  const stripWidth = Math.round(outputWidth / 7);
-  const maxShift = Math.round(stripWidth * 0.35);
+  // Eye separation is an ABSOLUTE pixel distance — it models the gap between a
+  // viewer's pupils, which does not grow just because the image is bigger.
+  // (Deriving it from the image width gave a 439px separation on a 3072px
+  // render: wider than anyone can diverge, so the image simply cannot fuse.)
+  // ~2.5in at 72dpi. MU is the depth of field; together these put the
+  // separation between about 72px (near) and 90px (far) — a ~20% swing, which
+  // the eye can track. Much more than that and fusion breaks at depth edges.
+  const EYE_SEP = 180;
+  const MU = 1 / 3;
+  const sepFor = (z: number) =>
+    Math.round(((1 - MU * z) * EYE_SEP) / (2 - MU * z));
+
   const out = Buffer.alloc(outputWidth * outputHeight * 4);
 
-  // Seeded random for reproducibility
+  // Seeded so a re-run of the same job reproduces the same image.
   let seed = 42;
-  function rand() {
+  const rand = () => {
     seed = (seed * 1664525 + 1013904223) & 0xffffffff;
-    return ((seed >>> 0) / 0xffffffff);
-  }
+    return (seed >>> 0) / 0x100000000;
+  };
+
+  const same = new Int32Array(outputWidth);
+  const zRow = new Float32Array(outputWidth);
+  const pix = new Uint8Array(outputWidth);
 
   for (let y = 0; y < outputHeight; y++) {
-    // Generate random dot strip for leftmost column
-    const strip: number[][] = [];
-    for (let x = 0; x < stripWidth; x++) {
-      strip.push([Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)]);
+    for (let x = 0; x < outputWidth; x++) {
+      zRow[x] = sampleDepth(smoothed, depthWidth, depthHeight, x, y, outputWidth, outputHeight);
+      same[x] = x;
     }
 
-    // Link array: each pixel links to another pixel that should have the same color
-    const same = new Int32Array(outputWidth);
-    for (let x = 0; x < outputWidth; x++) same[x] = x;
-
-    // Compute constraints from depth
     for (let x = 0; x < outputWidth; x++) {
-      const d = sampleDepth(normalized, depthWidth, depthHeight, x, y, outputWidth, outputHeight);
-      const sep = stripWidth - Math.round(d * maxShift);
-      const left = Math.round(x - sep / 2);
-      const right = left + sep;
-      if (left >= 0 && right < outputWidth) {
-        // Link left and right — they should show the same color
-        let l = left, r = right;
-        while (same[l] !== l) l = same[l];
-        while (same[r] !== r) r = same[r];
-        if (l !== r) {
-          if (l < r) same[r] = l;
-          else same[l] = r;
+      const z = zRow[x];
+      const s = sepFor(z);
+      let left = x - ((s + (s & 1)) >> 1);
+      let right = left + s;
+      if (left < 0 || right >= outputWidth) continue;
+
+      // Hidden-surface removal (Thimbleby, Inglis & Witten 1994). Without this
+      // check, a point occluded by a nearer surface still gets linked to its
+      // partner, which smears the edges of shapes.
+      let visible = true;
+      let zt = 0;
+      let t = 1;
+      do {
+        zt = z + (2 * (2 - MU * z) * t) / (MU * EYE_SEP);
+        const li = x - t;
+        const ri = x + t;
+        visible =
+          (li < 0 || zRow[li] < zt) && (ri >= outputWidth || zRow[ri] < zt);
+        t++;
+      } while (visible && zt < 1);
+      if (!visible) continue;
+
+      // Merge the two positions into one constraint class.
+      let k = same[left];
+      while (k !== left && k !== right) {
+        if (k < right) {
+          left = k;
+          k = same[left];
+        } else {
+          same[left] = right;
+          left = right;
+          right = k;
+          k = same[left];
         }
       }
+      same[left] = right;
     }
 
-    // Resolve chains
-    for (let x = 0; x < outputWidth; x++) {
-      let root = x;
-      while (same[root] !== root) root = same[root];
-      same[x] = root;
-    }
-
-    // Assign colors
-    const colors: (number[] | null)[] = new Array(outputWidth).fill(null);
-    for (let x = 0; x < outputWidth; x++) {
-      const root = same[x];
-      if (!colors[root]) {
-        colors[root] = [Math.floor(rand() * 256), Math.floor(rand() * 256), Math.floor(rand() * 256)];
-      }
-      const c = colors[root]!;
+    // Right to left, so a pixel's partner is always already decided. Dots are
+    // black or white: independent random RGB gives coloured confetti whose
+    // luminance edges are far weaker, and it is noticeably harder to fuse.
+    for (let x = outputWidth - 1; x >= 0; x--) {
+      pix[x] = same[x] === x ? (rand() < 0.5 ? 0 : 255) : pix[same[x]];
       const idx = (y * outputWidth + x) * 4;
-      out[idx] = c[0];
-      out[idx + 1] = c[1];
-      out[idx + 2] = c[2];
+      out[idx] = pix[x];
+      out[idx + 1] = pix[x];
+      out[idx + 2] = pix[x];
       out[idx + 3] = 255;
     }
   }

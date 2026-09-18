@@ -43,7 +43,7 @@ interface Stats {
     startedAt: string | null;
     createdAt: string;
   }[];
-  users: { id: string; email: string; credits: number; createdAt: string; jobCount: number; paymentCount: number }[];
+  users: { id: string; email: string; credits: number; hdCredits: number; plan: string; createdAt: string; jobCount: number; paymentCount: number }[];
   payments: { id: string; email: string; amount: number; credits: number; status: string; stripeSessionId: string; createdAt: string }[];
   recentJobs: {
     id: string;
@@ -468,6 +468,7 @@ export default function AdminPage() {
                         <tr className="border-b border-gray-800 text-left text-gray-500">
                           <th className="px-4 py-3 font-medium">Email</th>
                           <th className="px-4 py-3 font-medium">Credits</th>
+                          <th className="px-4 py-3 font-medium">HD</th>
                           <th className="px-4 py-3 font-medium">Uploads</th>
                           <th className="px-4 py-3 font-medium">Payments</th>
                           <th className="px-4 py-3 font-medium">Registered</th>
@@ -476,7 +477,7 @@ export default function AdminPage() {
                       </thead>
                       <tbody>
                         {stats.users.length === 0 ? (
-                          <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-600">No registered users yet</td></tr>
+                          <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600">No registered users yet</td></tr>
                         ) : (
                           stats.users.map((u) => (
                             <tr key={u.id} className="border-b border-gray-800/50 hover:bg-gray-800/30">
@@ -486,11 +487,43 @@ export default function AdminPage() {
                                   {u.credits}
                                 </span>
                               </td>
+                              <td className="px-4 py-3">
+                                {u.plan === "pro" ? (
+                                  <span className="text-[10px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded font-medium">
+                                    PRO
+                                  </span>
+                                ) : (
+                                  <span className={u.hdCredits > 0 ? "text-purple-300 font-medium" : "text-gray-600"}>
+                                    {u.hdCredits}
+                                  </span>
+                                )}
+                              </td>
                               <td className="px-4 py-3 text-gray-400">{u.jobCount}</td>
                               <td className="px-4 py-3 text-gray-400">{u.paymentCount}</td>
                               <td className="px-4 py-3 text-gray-400">{formatDate(u.createdAt)}</td>
                               <td className="px-4 py-3">
                                 <div className="flex gap-2">
+                                  <button
+                                    onClick={async () => {
+                                      const amt = prompt(
+                                        `Grant HD exports to ${u.email}\nCurrent: ${u.hdCredits}${u.plan === "pro" ? " (Pro — already unlimited)" : ""}\n\nHow many HD exports to add?`,
+                                        "5"
+                                      );
+                                      if (!amt) return;
+                                      const amount = parseInt(amt);
+                                      if (isNaN(amount)) return;
+                                      const reason = prompt("Reason (optional):") || "";
+                                      await fetch("/api/admin/users", {
+                                        method: "PATCH",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({ userId: u.id, action: "grantHd", amount, reason }),
+                                      });
+                                      loadStats();
+                                    }}
+                                    className="text-xs text-purple-400 hover:text-purple-300 transition-colors"
+                                  >
+                                    +HD
+                                  </button>
                                   <button
                                     onClick={async () => {
                                       const amt = prompt(`Adjust credits for ${u.email}\nCurrent: ${u.credits}\n\nEnter amount (positive to add, negative to remove):`);

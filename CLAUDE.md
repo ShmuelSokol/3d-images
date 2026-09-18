@@ -123,6 +123,31 @@ railway up web --path-as-root --detach
 - Gated to Pro at upload; videos never get it. Render loops are O(pixels), so 4096px is
   ~16x the work of 1024px — and the queue runs one job at a time.
 
+## Autostereogram (Magic Eye) — non-obvious constraints
+- **Dot separation is an ABSOLUTE pixel distance, never a fraction of image width.**
+  It models the gap between the viewer's pupils, which doesn't grow because the picture
+  is bigger. `outputWidth / 7` gave 146px at 1024 and 439px at 3072 — wider than anyone
+  can diverge, i.e. unfusable. Now `EYE_SEP = 180`, `MU = 1/3` → 72px (near) to 90px
+  (far), a ~20% swing the eye can track.
+- **Stereograms are deliberately NOT rendered at HD.** Random dots carry no detail to
+  preserve, and enlarging the canvas means the separation scales below fusable when the
+  viewer fits the image to their screen. Always generated at the 1024px working size.
+- **Dots are black/white, not random RGB.** Independent per-channel noise gives coloured
+  confetti with weak luminance edges that fuses badly.
+- Implements Thimbleby–Inglis–Witten (1994) including the **hidden-surface check** —
+  without it, occluded points still get linked and shape edges smear.
+- Verified empirically: near surface repeats at 72px, background at 90px, both 100%
+  match, exactly two luminance values.
+
+## Admin identity
+- The admin cookie (`td_admin`) is **separate from the customer cookie** (`td_auth`).
+  `ImageProcessor` renders on the homepage *and* inside the admin Generator tab, so
+  without special handling an admin is treated as an anonymous visitor — shown a login
+  prompt and capped at the free limit on their own site.
+- `isAdmin(req) && !userId` ⇒ treated as unlimited Pro in `/api/credits` (`type:
+  "admin"`) and `/api/jobs` (no credit charge, no plan gate). An admin who *also* has a
+  customer session falls through to the normal metered path for that account.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5

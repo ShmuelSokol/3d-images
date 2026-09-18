@@ -38,6 +38,21 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ user: updated });
     }
 
+    if (action === "grantHd") {
+      if (typeof amount !== "number") {
+        return NextResponse.json({ error: "amount required" }, { status: 400 });
+      }
+      const updated = await prisma.user.update({
+        where: { id: userId },
+        data: { hdCredits: { increment: amount } },
+        select: { id: true, email: true, hdCredits: true },
+      });
+      console.log(
+        `[admin] Granted ${amount} HD export(s) to ${user.email} (reason: ${reason || "none"})`
+      );
+      return NextResponse.json({ user: updated });
+    }
+
     if (action === "suspend") {
       await prisma.user.update({
         where: { id: userId },

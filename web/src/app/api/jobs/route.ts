@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSupabase } from "@/lib/supabase";
 import { jobQueue } from "@/lib/job-queue";
-import { getSessionId, getUserId, setSessionCookie } from "@/lib/session";
+import { getSessionId, getUserId, setSessionCookie, isAdmin } from "@/lib/session";
 import sharp from "sharp";
 
 // Supabase rejects storage objects over 50 MB — keep headroom under that.
@@ -27,6 +27,10 @@ export async function POST(req: NextRequest) {
     const fillOcclusion = (formData.get("fillOcclusion") as string) !== "false";
     const formats = (formData.get("formats") as string) || "anaglyph,stereogram,sbs";
     const wantsHiRes = (formData.get("hiRes") as string) === "true";
+    // Set in the logged-in branch below: whether this HD render is paid for by
+    // a granted one-off export rather than an active Pro subscription.
+    let useHdCredit = false;
+    let isProUser = false;
     const isVideo = file.type.startsWith("video/");
     const buffer = Buffer.from(await file.arrayBuffer());
 
@@ -54,11 +58,17 @@ export async function POST(req: NextRequest) {
     const userId = getUserId(req);
 
     // ── Usage limit check ──
-    if (userId) {
+    // An authenticated admin is unlimited: no credits, no plan gate. Their
+    // cookie is separate from the customer one, so without this they'd hit the
+    // anonymous free limit on their own site.
+    const admin = isAdmin(req) && !userId;
+    if (admin) {
+      isProUser = true;
+    } else if (userId) {
       // Logged-in user: check credits + plan
       const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { imageCredits: true, plan: true },
+        select: { imageCredits: true, plan: true, hdCredits: true },
       });
       if (!user || user.imageCredits <= 0) {
         return NextResponse.json(
@@ -67,12 +77,20 @@ export async function POST(req: NextRequest) {
         );
       }
       // HD output is a Pro feature — rendering at native resolution is
-      // markedly more expensive, and jobs run one at a time.
-      if (wantsHiRes && user.plan !== "pro") {
-        return NextResponse.json(
-          { error: "HD output requires Pro plan. Upgrade for $9.99/month.", code: "PRO_REQUIRED" },
-          { status: 403 }
-        );
+      // markedly more expensive, and jobs run one at a time. Non-Pro users can
+      // still spend a granted HD export.
+      isProUser = user.plan === "pro";
+      if (wantsHiRes && !isVideo && !isProUser) {
+        if (user.hdCredits <= 0) {
+          return NextResponse.json(
+            {
+              error: "HD output requires Pro plan. Upgrade for $9.99/month.",
+              code: "PRO_REQUIRED",
+            },
+            { status: 403 }
+          );
+        }
+        useHdCredit = true;
       }
       // Video requires Pro plan
       if (isVideo && user.plan !== "pro") {
@@ -200,8 +218,10 @@ export async function POST(req: NextRequest) {
         fillOcclusion,
         formats: isVideo ? formats : "anaglyph,stereogram,sbs",
         status: "pending",
-        // Only ever true for a Pro user — the checks above return before here.
+        // Only ever true for a Pro user or someone spending a granted HD
+        // export — the checks above return before here otherwise.
         hiRes: wantsHiRes && !isVideo,
+        hdCreditUsed: useHdCredit,
         mediaType: isVideo ? "video" : "image",
         sessionId,
         userId,
@@ -212,7 +232,10 @@ export async function POST(req: NextRequest) {
     if (userId) {
       await prisma.user.update({
         where: { id: userId },
-        data: { imageCredits: { decrement: 1 } },
+        data: {
+          imageCredits: { decrement: 1 },
+          ...(useHdCredit ? { hdCredits: { decrement: 1 } } : {}),
+        },
       });
     }
 
