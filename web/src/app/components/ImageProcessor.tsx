@@ -8,6 +8,33 @@ const OnboardingFlow = lazy(() => import("./OnboardingFlow"));
 
 // ── Types ──
 
+/**
+ * Read each image's pixel dimensions in the browser so the settings dialog can
+ * tell the user what a given print size would actually cost them in sharpness.
+ */
+async function measureImages(
+  files: File[]
+): Promise<{ file: File; width: number; height: number }[]> {
+  return Promise.all(
+    files.map(
+      (file) =>
+        new Promise<{ file: File; width: number; height: number }>((resolve) => {
+          const url = URL.createObjectURL(file);
+          const img = new window.Image();
+          img.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve({ file, width: img.naturalWidth, height: img.naturalHeight });
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve({ file, width: 0, height: 0 });
+          };
+          img.src = url;
+        })
+    )
+  );
+}
+
 interface Job {
   id: string;
   originalUrl: string;
@@ -153,6 +180,14 @@ export default function ImageProcessor() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [videoFormats, setVideoFormats] = useState({ anaglyph: true, stereogram: true, sbs: true });
   const [pendingVideoFile, setPendingVideoFile] = useState<{ file: File; duration: number } | null>(null);
+  // Images wait here until the user confirms settings, rather than uploading
+  // the moment they're dropped.
+  const [pendingImages, setPendingImages] = useState<
+    { file: File; width: number; height: number }[] | null
+  >(null);
+  // Advisory only — print export happens after the render, but knowing the
+  // intent up front lets us recommend the right settings before spending a credit.
+  const [printIntent, setPrintIntent] = useState<string>("none");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -270,18 +305,11 @@ export default function ImageProcessor() {
       alert("Video processing requires Pro plan ($9.99/month). Upgrade to unlock video!");
       setShowUpgrade(true);
       // Still upload any image files
+      // Any images dropped alongside still go through the settings dialog —
+      // nothing should start rendering without being confirmed.
       const imageFiles = fileArr.filter(f => !f.type.startsWith("video/"));
       if (imageFiles.length > 0) {
-        setUploading(true);
-        try {
-          for (const f of imageFiles) {
-            const ok = await uploadFile(f);
-            if (!ok) break;
-          }
-        } finally {
-          setUploading(false);
-          fetchCredits();
-        }
+        setPendingImages(await measureImages(imageFiles));
       }
       return;
     }
@@ -302,26 +330,28 @@ export default function ImageProcessor() {
         setPendingVideoFile({ file: videoFile, duration: 60 });
       };
       // Upload non-video files immediately
+      // Any images dropped alongside still go through the settings dialog —
+      // nothing should start rendering without being confirmed.
       const imageFiles = fileArr.filter(f => !f.type.startsWith("video/"));
       if (imageFiles.length > 0) {
-        setUploading(true);
-        try {
-          for (const f of imageFiles) {
-            const ok = await uploadFile(f);
-            if (!ok) break;
-          }
-        } finally {
-          setUploading(false);
-          fetchCredits();
-        }
+        setPendingImages(await measureImages(imageFiles));
       }
       return;
     }
 
-    // Images only — upload directly
+    // Images: read each one's dimensions, then ask for settings before
+    // spending anything. Settings chosen after the fact would mean re-running
+    // and paying twice.
+    setPendingImages(await measureImages(fileArr));
+  }, [isPro]);
+
+  const confirmImageUpload = useCallback(async () => {
+    if (!pendingImages) return;
+    const files = pendingImages.map((p) => p.file);
+    setPendingImages(null);
     setUploading(true);
     try {
-      for (const f of fileArr) {
+      for (const f of files) {
         const ok = await uploadFile(f);
         if (!ok) break;
       }
@@ -331,7 +361,7 @@ export default function ImageProcessor() {
       setUploading(false);
       fetchCredits();
     }
-  }, [uploadFile, fetchCredits, isPro]);
+  }, [pendingImages, uploadFile, fetchCredits]);
 
   // Confirm video upload with selected formats
   const confirmVideoUpload = useCallback(async () => {
@@ -1031,7 +1061,193 @@ export default function ImageProcessor() {
         </Suspense>
       )}
 
-      {/* Video format picker modal */}
+      {/* Image settings dialog. Suppressed while the video dialog is open so a
+          mixed drop asks about the video first, then the images — two
+          full-screen modals at the same z-index would hide one another. */}
+      {pendingImages && pendingImages.length > 0 && !pendingVideoFile && (
+        <div
+          className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+          onClick={() => setPendingImages(null)}
+        >
+          <div
+            className="bg-gray-900 border border-gray-700 rounded-xl p-5 max-w-lg w-full max-h-full overflow-auto space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <h2 className="text-base font-semibold text-gray-100">
+                {pendingImages.length === 1
+                  ? "Settings for this image"
+                  : `Settings for ${pendingImages.length} images`}
+              </h2>
+              <p className="text-xs text-gray-500 mt-1">
+                These apply to every image in this batch. Each one costs a credit, so
+                it&apos;s worth getting them right now.
+              </p>
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+              {pendingImages.slice(0, 6).map((p, i) => (
+                <div key={i} className="text-[10px] text-gray-500 bg-gray-800 rounded px-2 py-1">
+                  <span className="text-gray-300">{p.file.name.slice(0, 22)}</span>
+                  {p.width > 0 && <> &middot; {p.width}&times;{p.height}</>}
+                  {p.file.size > 45 * 1024 * 1024 && (
+                    <span className="text-amber-400"> &middot; will be resized to store</span>
+                  )}
+                </div>
+              ))}
+              {pendingImages.length > 6 && (
+                <div className="text-[10px] text-gray-500 px-2 py-1">
+                  +{pendingImages.length - 6} more
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-3 border-t border-gray-800 pt-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400 w-24">3D strength</span>
+                <input
+                  type="range" min="1" max="40" value={intensity}
+                  onChange={(e) => setIntensity(parseInt(e.target.value))}
+                  className="flex-1 accent-cyan-500 h-1.5"
+                />
+                <span className="text-xs text-cyan-400 tabular-nums w-6 text-right">{intensity}</span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400 w-24">Colour</span>
+                <select
+                  value={colorMode}
+                  onChange={(e) => setColorMode(e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 flex-1"
+                >
+                  <option value="dubois">Dubois — richer colour on screen</option>
+                  <option value="classic">Classic red/cyan — prints better</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-400 w-24">Planning to print?</span>
+                <select
+                  value={printIntent}
+                  onChange={(e) => setPrintIntent(e.target.value)}
+                  className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-gray-200 flex-1"
+                >
+                  <option value="none">No — screen only</option>
+                  <option value="12x18">Yes — 12&quot; x 18&quot;</option>
+                  <option value="16x20">Yes — 16&quot; x 20&quot;</option>
+                  <option value="18x24">Yes — 18&quot; x 24&quot;</option>
+                  <option value="24x36">Yes — 24&quot; x 36&quot;</option>
+                  <option value="a2">Yes — A2</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-4 flex-wrap">
+                <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                  <input
+                    type="checkbox" checked={fillOcclusion}
+                    onChange={(e) => setFillOcclusion(e.target.checked)}
+                    className="accent-cyan-500"
+                  />
+                  <span className="text-gray-400">Fill gaps at depth edges</span>
+                </label>
+                <label
+                  className={`flex items-center gap-1.5 text-xs ${canHd ? "cursor-pointer" : "cursor-not-allowed"}`}
+                >
+                  <input
+                    type="checkbox" checked={hiRes && canHd} disabled={!canHd}
+                    onChange={(e) => canHd && setHiRes(e.target.checked)}
+                    className="accent-purple-500 disabled:opacity-40"
+                  />
+                  <span className={canHd ? "text-gray-400" : "text-gray-600"}>HD output</span>
+                  {!canHd && (
+                    <span className="text-[9px] px-1.5 py-0.5 bg-purple-900/50 text-purple-300 rounded">PRO</span>
+                  )}
+                </label>
+              </div>
+            </div>
+
+            {(() => {
+              const tips: { text: string; warn: boolean }[] = [];
+              const PRINT_LONG: Record<string, number> = {
+                "12x18": 2700, "16x20": 3000, "18x24": 3600, "24x36": 5400, a2: 3508,
+              };
+              if (printIntent !== "none") {
+                const target = PRINT_LONG[printIntent];
+                const renderCap = hiRes && canHd ? 3072 : 1024;
+                const srcLong = Math.max(
+                  ...pendingImages.map((p) => Math.max(p.width, p.height) || 0)
+                );
+                const effective = Math.min(srcLong || renderCap, renderCap);
+                const factor = target / effective;
+                if (!canHd) {
+                  tips.push({
+                    text: `Without HD this renders at ${effective}px and the print is enlarged ${factor.toFixed(1)}x — it will look soft. HD needs Pro.`,
+                    warn: true,
+                  });
+                } else if (!hiRes) {
+                  tips.push({
+                    text: `Turn on HD output — otherwise the print is enlarged ${factor.toFixed(1)}x from a 1024px render and will look soft.`,
+                    warn: true,
+                  });
+                } else if (factor > 2.5) {
+                  tips.push({
+                    text: `Your source is ${srcLong}px, so this print is enlarged ${factor.toFixed(1)}x. A larger original would print sharper.`,
+                    warn: true,
+                  });
+                } else {
+                  tips.push({
+                    text: `Good to go — about ${factor.toFixed(1)}x enlargement at 150dpi.`,
+                    warn: false,
+                  });
+                }
+                if (colorMode === "dubois") {
+                  tips.push({
+                    text: "For print, Classic red/cyan usually beats Dubois — Dubois is tuned for screens and CMYK ink can't reach those colours.",
+                    warn: false,
+                  });
+                }
+                if (intensity > 12) {
+                  tips.push({
+                    text: `3D strength ${intensity} is strong for a large print — the effect scales with size and can be uncomfortable up close. Try 8-12.`,
+                    warn: false,
+                  });
+                }
+                tips.push({ text: "Print on matte paper — gloss reflections break the 3D effect.", warn: false });
+              }
+              if (tips.length === 0) return null;
+              return (
+                <div className="border-t border-gray-800 pt-3 space-y-1.5">
+                  {tips.map((t, i) => (
+                    <p
+                      key={i}
+                      className={`text-[11px] leading-relaxed ${t.warn ? "text-amber-400" : "text-gray-500"}`}
+                    >
+                      {t.warn ? "\u26a0 " : "\u2022 "}{t.text}
+                    </p>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="flex gap-2 pt-1">
+              <button
+                onClick={confirmImageUpload}
+                className="flex-1 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg text-sm font-medium transition-colors"
+              >
+                Generate {pendingImages.length === 1 ? "" : pendingImages.length + " "}3D
+                {pendingImages.length === 1 ? " image" : " images"}
+              </button>
+              <button
+                onClick={() => setPendingImages(null)}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {pendingVideoFile && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setPendingVideoFile(null)}>
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 max-w-md w-full space-y-4" onClick={(e) => e.stopPropagation()}>

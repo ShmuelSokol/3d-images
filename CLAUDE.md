@@ -148,6 +148,33 @@ railway up web --path-as-root --detach
   "admin"`) and `/api/jobs` (no credit charge, no plan gate). An admin who *also* has a
   customer session falls through to the normal metered path for that account.
 
+## Print export
+- `GET /api/jobs/[id]/print?size=&fit=&format=` streams a print-ready JPEG. Sizes are a
+  whitelist (12x18, 16x20, 18x24, 24x36, A2) at **150dpi**, with the density stamped in
+  the file so a print shop opens it at the right physical size.
+- **The 3D render can't happen at print resolution** — 24x36 @300dpi is 78 megapixels,
+  ~300MB per raw buffer with three live. So the render stays at the HD cap and this is a
+  pure resample, which libvips streams: ~380MB peak even at the largest target. Never
+  decode to a JS RGBA buffer here.
+- 150dpi is the large-format standard and means ~1.2x enlargement at 18x24 from a 3072px
+  render; 300dpi would need 3.5x of detail that doesn't exist.
+- Aspect mismatch is the user's choice (crop to fill / fit with border) — AI images are
+  usually square and poster paper isn't.
+- Not queued like render jobs, so it's **rate limited**; several concurrent 24x36
+  resamples would otherwise stack against the container memory ceiling.
+- Print tips surfaced in the UI: Classic red/cyan beats Dubois in CMYK, matte paper (gloss
+  breaks the effect), and lower intensity for big prints (parallax scales with size).
+
+## Upload flow
+- Uploads do **not** start on drop. Files are measured client-side (`measureImages`) and
+  held in `pendingImages` until the user confirms settings — settings chosen afterwards
+  would mean re-running and paying a second credit.
+- The dialog's recommendations are computed from the file's real dimensions against the
+  render cap, so it can state the actual enlargement factor for a chosen print size
+  before a credit is spent.
+- Only one full-screen modal at a time: the image dialog is suppressed while
+  `pendingVideoFile` is set, so a mixed drop asks about the video first.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5
