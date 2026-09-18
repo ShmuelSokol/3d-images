@@ -1,7 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import jwt from "jsonwebtoken";
 
-const JWT_SECRET = process.env["JWT_SECRET"] || "3d-images-secret-key-change-in-prod";
+/**
+ * This secret signs both the admin cookie and every customer auth cookie, so a
+ * guessable value lets anyone forge either. It previously fell back to a
+ * literal committed to a public repo, which meant that with the env var unset
+ * (as it was in production) anyone who read the repo could mint an admin token.
+ *
+ * Now it fails closed in production instead of silently running on a forgeable
+ * secret. Resolved per call rather than at module load: this module is pulled
+ * in while Next.js builds, and throwing there would break the build rather than
+ * surface the misconfiguration at runtime.
+ */
+const DEV_FALLBACK_SECRET = "dev-only-insecure-secret";
+
+function getJwtSecret(): string {
+  const s = process.env["JWT_SECRET"];
+  if (s && s.length >= 16) return s;
+  if (process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "JWT_SECRET is missing or shorter than 16 characters. Set a strong " +
+        "JWT_SECRET env var — sessions are forgeable without it."
+    );
+  }
+  return DEV_FALLBACK_SECRET;
+}
 const SESSION_COOKIE = "td_session";
 const AUTH_COOKIE = "td_auth";
 
@@ -36,7 +59,7 @@ export function getUserId(req: NextRequest): string | null {
   const token = req.cookies.get(AUTH_COOKIE)?.value;
   if (!token) return null;
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, getJwtSecret()) as { userId: string };
     return payload.userId;
   } catch {
     return null;
@@ -47,7 +70,7 @@ export function getUserId(req: NextRequest): string | null {
  * Create a JWT token for a user.
  */
 export function createAuthToken(userId: string): string {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: "90d" });
+  return jwt.sign({ userId }, getJwtSecret(), { expiresIn: "90d" });
 }
 
 const ADMIN_COOKIE = "td_admin";
@@ -59,7 +82,7 @@ export function isAdmin(req: NextRequest): boolean {
   const token = req.cookies.get(ADMIN_COOKIE)?.value;
   if (!token) return false;
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { admin: boolean };
+    const payload = jwt.verify(token, getJwtSecret()) as { admin: boolean };
     return payload.admin === true;
   } catch {
     return false;
@@ -70,7 +93,7 @@ export function isAdmin(req: NextRequest): boolean {
  * Create a JWT token for admin.
  */
 export function createAdminToken(): string {
-  return jwt.sign({ admin: true }, JWT_SECRET, { expiresIn: "7d" });
+  return jwt.sign({ admin: true }, getJwtSecret(), { expiresIn: "7d" });
 }
 
 /**
