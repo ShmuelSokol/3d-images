@@ -357,24 +357,26 @@ async function main() {
         const stereogram = generateAutostereogram(depth.data, depth.width, depth.height, w, h);
         const sbs = generateSideBySide(rawImg, depth.data, depth.width, depth.height, job.intensity);
 
-        const ext = job.hiRes ? "jpg" : "png";
-        const imgType = job.hiRes ? "image/jpeg" : "image/png";
-        const encodeMain = (img) => (job.hiRes ? rawToJpeg(img) : rawToPng(img));
-
+        // Photographic outputs ship as JPEG. A PNG of a photo measured ~9x
+        // larger for no visible gain, and that size is paid twice: once
+        // uploading from the worker (slowing the job) and again by every
+        // viewer. The anaglyph keeps 4:4:4 chroma because each eye lives in a
+        // different colour channel — subsampling bleeds them into each other
+        // and measurably doubles the red-channel error.
         const [anaglyphPng, depthPng, colorMapPng, stereogramPng, sbsPng] = await Promise.all([
-          encodeMain(anaglyph),
+          rawToJpeg(anaglyph, 92, "4:4:4"),
           depthToPng(depth.data, depth.width, depth.height),
           generateColorMap(depth.data, depth.width, depth.height),
-          rawToPng(stereogram),
-          encodeMain(sbs),
+          rawToPngBW(stereogram),
+          rawToJpeg(sbs, 90),
         ]);
 
         const [anaUpload, depthUpload, distUpload, stereoUpload, sbsUpload] = await Promise.all([
-          supabase.storage.from("3d-images").upload(`anaglyph/${jobId}-anaglyph.${ext}`, anaglyphPng, { contentType: imgType, upsert: true }),
+          supabase.storage.from("3d-images").upload(`anaglyph/${jobId}-anaglyph.jpg`, anaglyphPng, { contentType: "image/jpeg", upsert: true }),
           supabase.storage.from("3d-images").upload(`depth/${jobId}-depth.png`, depthPng, { contentType: "image/png", upsert: true }),
           supabase.storage.from("3d-images").upload(`distance/${jobId}-distance.png`, colorMapPng, { contentType: "image/png", upsert: true }),
           supabase.storage.from("3d-images").upload(`stereogram/${jobId}-stereogram.png`, stereogramPng, { contentType: "image/png", upsert: true }),
-          supabase.storage.from("3d-images").upload(`sbs/${jobId}-sbs.${ext}`, sbsPng, { contentType: imgType, upsert: true }),
+          supabase.storage.from("3d-images").upload(`sbs/${jobId}-sbs.jpg`, sbsPng, { contentType: "image/jpeg", upsert: true }),
         ]);
 
         if (anaUpload.error) throw new Error(`Anaglyph upload: ${anaUpload.error.message}`);
@@ -383,11 +385,11 @@ async function main() {
         if (stereoUpload.error) throw new Error(`Stereogram upload: ${stereoUpload.error.message}`);
         if (sbsUpload.error) throw new Error(`SBS upload: ${sbsUpload.error.message}`);
 
-        const anaglyphUrl = supabase.storage.from("3d-images").getPublicUrl(`anaglyph/${jobId}-anaglyph.${ext}`).data.publicUrl;
+        const anaglyphUrl = supabase.storage.from("3d-images").getPublicUrl(`anaglyph/${jobId}-anaglyph.jpg`).data.publicUrl;
         const depthMapUrl = supabase.storage.from("3d-images").getPublicUrl(`depth/${jobId}-depth.png`).data.publicUrl;
         const distanceMapUrl = supabase.storage.from("3d-images").getPublicUrl(`distance/${jobId}-distance.png`).data.publicUrl;
         const stereogramUrl = supabase.storage.from("3d-images").getPublicUrl(`stereogram/${jobId}-stereogram.png`).data.publicUrl;
-        const sbsUrl = supabase.storage.from("3d-images").getPublicUrl(`sbs/${jobId}-sbs.${ext}`).data.publicUrl;
+        const sbsUrl = supabase.storage.from("3d-images").getPublicUrl(`sbs/${jobId}-sbs.jpg`).data.publicUrl;
 
         await prisma.image.update({
           where: { id: jobId },
@@ -469,6 +471,7 @@ const {
   depthToPng,
   rawToPng,
   rawToJpeg,
+  rawToPngBW,
   generateAutostereogram,
   generateSideBySide,
 } = require(path.join(__dirname, "lib", "server-anaglyph.js"));

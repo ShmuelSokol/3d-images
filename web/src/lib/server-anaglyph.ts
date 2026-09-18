@@ -332,7 +332,11 @@ export async function rawToPng(image: RawImage): Promise<Buffer> {
  * Encode raw RGBA to JPEG. Used for high-resolution output, where PNG would
  * be tens of megabytes and can exceed the storage object-size limit.
  */
-export async function rawToJpeg(image: RawImage, quality = 92): Promise<Buffer> {
+export async function rawToJpeg(
+  image: RawImage,
+  quality = 92,
+  chromaSubsampling = "4:2:0"
+): Promise<Buffer> {
   return sharp(image.data, {
     raw: { width: image.width, height: image.height, channels: 4 },
   })
@@ -340,7 +344,23 @@ export async function rawToJpeg(image: RawImage, quality = 92): Promise<Buffer> 
     // here (1837ms vs 81ms on a 3072x2304 frame) to save roughly 5% of file
     // size — and this runs inside the job queue, which processes one job at a
     // time, so every second is a second every other queued job waits.
-    .jpeg({ quality })
+    .jpeg({ quality, chromaSubsampling })
+    .toBuffer();
+}
+
+/**
+ * Encode a black-and-white image as a 2-colour palette PNG.
+ *
+ * For the autostereogram this is lossless *and* about five times smaller than
+ * an RGB PNG (466KB -> 95KB measured). JPEG is not an option there: it is both
+ * larger on dot noise and its ringing softens the dot edges, which is exactly
+ * what the eye needs crisp in order to fuse the image.
+ */
+export async function rawToPngBW(image: RawImage): Promise<Buffer> {
+  return sharp(image.data, {
+    raw: { width: image.width, height: image.height, channels: 4 },
+  })
+    .png({ colors: 2, effort: 7 })
     .toBuffer();
 }
 

@@ -225,6 +225,18 @@ railway up web --path-as-root --detach
   download fails with EACCES and every job errors.
 - The model loads at `fp16`, roughly halving download and load time.
 
+## Output encoding — measured, not guessed
+- **Anaglyph: JPEG q92 with `4:4:4` chroma.** Each eye lives in a different colour
+  channel, so chroma subsampling bleeds them together — default 4:2:0 doubled the
+  red-channel error (1.60 vs 0.89). 693KB PNG -> ~130KB.
+- **Side-by-side: JPEG q90.** 1289KB -> 140KB. Not colour-coded, so normal subsampling
+  is fine.
+- **Stereogram: 2-colour palette PNG, and it must stay lossless.** JPEG is both *bigger*
+  on dot noise (684KB vs 466KB) and its ringing softens the dot edges the eye needs in
+  order to fuse. As a literal two-colour image it packs to ~95KB, pixel-identical.
+- Net ~2.4MB -> ~0.37MB per job. That size is paid twice: uploading from the worker
+  (slowing the job) and again by every viewer.
+
 ## Important Notes
 - Use `process.env["KEY"]` (bracket notation) not `process.env.KEY`
 - Prisma v5 required — don't use npx prisma without @5
