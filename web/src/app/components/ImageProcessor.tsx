@@ -234,13 +234,18 @@ export default function ImageProcessor() {
       setJobs((prev) => [job, ...prev]);
       setSelectedId((prev) => prev ?? job.id);
       return true;
-    } else if (res.status === 403) {
-      const data = await res.json();
+    }
+
+    const data = await res.json().catch(() => ({} as { error?: string }));
+    if (res.status === 403) {
       setShowUpgrade(true);
       alert(data.error || "Usage limit reached");
       return false;
     }
-    return true;
+    // Any other failure (too large, unreadable image, server error) has to
+    // surface — silently returning true left users staring at nothing.
+    alert(data.error || "Upload failed. Please try again.");
+    return false;
   }, [intensity, colorMode, fillOcclusion]);
 
   const handleFiles = useCallback(async (files: FileList | File[]) => {

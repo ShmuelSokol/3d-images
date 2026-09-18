@@ -5,6 +5,15 @@ import { jobQueue } from "@/lib/job-queue";
 import { getSessionId, getUserId, setSessionCookie } from "@/lib/session";
 import sharp from "sharp";
 
+// Supabase rejects storage objects over 50 MB — keep headroom under that.
+const STORAGE_LIMIT_BYTES = 45 * 1024 * 1024;
+// Absolute ceiling on an incoming request body.
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+function formatMb(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -19,6 +28,26 @@ export async function POST(req: NextRequest) {
     const formats = (formData.get("formats") as string) || "anaglyph,stereogram,sbs";
     const isVideo = file.type.startsWith("video/");
     const buffer = Buffer.from(await file.arrayBuffer());
+
+    if (buffer.length > MAX_UPLOAD_BYTES) {
+      return NextResponse.json(
+        {
+          error: `File is too large (${formatMb(buffer.length)}). Maximum is ${formatMb(MAX_UPLOAD_BYTES)}.`,
+          code: "FILE_TOO_LARGE",
+        },
+        { status: 413 }
+      );
+    }
+    // Oversized stills are shrunk before storage (below); videos can't be, so stop here.
+    if (isVideo && buffer.length > STORAGE_LIMIT_BYTES) {
+      return NextResponse.json(
+        {
+          error: `Video is too large (${formatMb(buffer.length)}). Maximum is ${formatMb(STORAGE_LIMIT_BYTES)} — trim it or lower the resolution.`,
+          code: "FILE_TOO_LARGE",
+        },
+        { status: 413 }
+      );
+    }
 
     const sessionId = getSessionId(req);
     const userId = getUserId(req);
@@ -43,11 +72,8 @@ export async function POST(req: NextRequest) {
           { status: 403 }
         );
       }
-      // Decrement credit atomically
-      await prisma.user.update({
-        where: { id: userId },
-        data: { imageCredits: { decrement: 1 } },
-      });
+      // The credit is charged only once the job row exists (see below), so a
+      // failed upload can never burn a credit without producing a job.
     } else {
       // Anonymous: no video
       if (isVideo) {
@@ -68,20 +94,63 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Re-encode stills that exceed the storage cap. Processing downscales to
+    // 1024px anyway (job-processor), so nothing useful is lost — this turns a
+    // hard rejection from Supabase into a job that simply works.
+    let storedBuffer = buffer;
+    let storedType = file.type;
+    let storedExt = file.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
+
+    if (!isVideo && storedBuffer.length > STORAGE_LIMIT_BYTES) {
+      try {
+        storedBuffer = Buffer.from(
+          await sharp(buffer, { limitInputPixels: false })
+            .rotate()
+            .resize(4096, 4096, { fit: "inside", withoutEnlargement: true })
+            .jpeg({ quality: 88 })
+            .toBuffer()
+        );
+        storedType = "image/jpeg";
+        storedExt = "jpg";
+        console.log(
+          `[upload] Shrank ${formatMb(buffer.length)} -> ${formatMb(storedBuffer.length)}`
+        );
+      } catch (err) {
+        console.error("Downscale failed:", err);
+        return NextResponse.json(
+          { error: "Could not read that image — try re-saving it as a JPEG or PNG.", code: "BAD_IMAGE" },
+          { status: 400 }
+        );
+      }
+    }
+
+    if (storedBuffer.length > STORAGE_LIMIT_BYTES) {
+      return NextResponse.json(
+        {
+          error: `File is too large to store (${formatMb(storedBuffer.length)}). Maximum is ${formatMb(STORAGE_LIMIT_BYTES)}.`,
+          code: "FILE_TOO_LARGE",
+        },
+        { status: 413 }
+      );
+    }
+
     // Upload original to Supabase Storage
     const supabase = getSupabase();
-    const ext = file.name.split(".").pop() || (isVideo ? "mp4" : "jpg");
-    const storageName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const storageName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${storedExt}`;
     const folder = isVideo ? "originals/videos" : "originals";
 
     const { error: uploadError } = await supabase.storage
       .from("3d-images")
-      .upload(`${folder}/${storageName}`, buffer, {
-        contentType: file.type,
+      .upload(`${folder}/${storageName}`, storedBuffer, {
+        contentType: storedType,
       });
 
     if (uploadError) {
-      return NextResponse.json({ error: uploadError.message }, { status: 500 });
+      console.error("Storage upload failed:", uploadError.message);
+      return NextResponse.json(
+        { error: "Upload failed — please try a smaller file.", code: "UPLOAD_FAILED" },
+        { status: 500 }
+      );
     }
 
     const {
@@ -95,7 +164,7 @@ export async function POST(req: NextRequest) {
       height = 0;
     if (!isVideo) {
       try {
-        const meta = await sharp(buffer).metadata();
+        const meta = await sharp(storedBuffer, { limitInputPixels: false }).metadata();
         width = meta.width || 0;
         height = meta.height || 0;
       } catch {
@@ -120,6 +189,14 @@ export async function POST(req: NextRequest) {
         userId,
       },
     });
+
+    // Charge the credit only now that the job row exists.
+    if (userId) {
+      await prisma.user.update({
+        where: { id: userId },
+        data: { imageCredits: { decrement: 1 } },
+      });
+    }
 
     // Kick the queue (fire and forget)
     jobQueue.kick().catch(console.error);

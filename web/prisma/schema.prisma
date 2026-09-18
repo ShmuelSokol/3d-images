@@ -43,6 +43,7 @@ model Image {
   colorMode     String   @default("dubois")
   fillOcclusion Boolean  @default(true)
   status        String   @default("pending")
+  refunded      Boolean  @default(false)
   error       String?
   mediaType   String   @default("image")
   duration    Float?

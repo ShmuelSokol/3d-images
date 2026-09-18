@@ -201,6 +201,23 @@ export async function processJob(jobId: string): Promise<void> {
           error: msg,
         },
       });
+      // Refund the credit — a failed job must never cost the user anything.
+      // Guarded by `refunded` so retry/reprocess can't mint credits: the job
+      // was charged once at upload, so it can be refunded at most once.
+      if (job.userId && !job.refunded) {
+        const claimed = await prisma.image.updateMany({
+          where: { id: jobId, refunded: false },
+          data: { refunded: true },
+        });
+        // updateMany reports 0 if another worker already claimed the refund.
+        if (claimed.count === 1) {
+          await prisma.user.update({
+            where: { id: job.userId },
+            data: { imageCredits: { increment: 1 } },
+          });
+          console.log(`[job] Refunded 1 credit to ${job.userId}`);
+        }
+      }
     }
   }
 }

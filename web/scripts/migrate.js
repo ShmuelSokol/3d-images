@@ -76,6 +76,8 @@ async function main() {
       "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
     )`,
+    // Credit refund tracking (2026-09-18) — guarantees at most one refund per job
+    `ALTER TABLE td_image ADD COLUMN IF NOT EXISTS refunded BOOLEAN NOT NULL DEFAULT false`,
   ];
 
   for (const sql of statements) {
