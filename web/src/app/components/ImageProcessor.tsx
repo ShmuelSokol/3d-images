@@ -197,10 +197,19 @@ export default function ImageProcessor() {
   // itself only refreshes on the normal poll.
   const [nowTick, setNowTick] = useState(() => Date.now());
 
+  // `jobsActive` is derived further down, so read it from a ref here: the tick
+  // only needs to run while something is actually processing. Unconditionally,
+  // it re-rendered the whole viewer once a second forever, including on an idle
+  // page with nothing to count.
+  const anyJobActive = jobs.some(
+    (j) => j.status === "pending" || j.status === "processing"
+  );
+
   useEffect(() => {
+    if (!anyJobActive) return;
     const t = setInterval(() => setNowTick(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [anyJobActive]);
 
   useEffect(() => {
     try {
@@ -309,9 +318,7 @@ export default function ImageProcessor() {
   // cleared the interval. The early return then skipped creating a new one, so
   // the very first poll that updated `jobs` silently killed polling for good and
   // the screen sat on "Processing" until a manual refresh.
-  const hasActive = jobs.some(
-    (j) => j.status === "pending" || j.status === "processing"
-  );
+  const hasActive = anyJobActive;
   // Selective polling: if a single job is selected and active, poll just that one.
   const selectedIsActive = Boolean(
     selectedId &&
